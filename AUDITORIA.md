@@ -342,6 +342,25 @@ vantagem real de +12,6pp com confiança seriam necessárias **~93 operações**
 
 Agir sobre os 45 trades seria apostar dinheiro real em ruído.
 
+### 5.2 OTC não é o mesmo ativo
+
+Fora do horário de pregão o robô cai automaticamente para o par `-OTC`.
+É útil para não travar, mas **invalida a comparação**: o preço OTC é gerado
+pela própria corretora, não vem do mercado interbancário. São séries de
+preço diferentes, com volatilidade e microestrutura próprias.
+
+Duas rodadas consecutivas do mesmo `rsi_reversal` ilustram o ponto:
+
+| instrumento | período | trades | acerto | p-valor |
+|---|---|---|---|---|
+| EURUSD | 43,2 dias | 45 | 66,7% | 0,060 |
+| EURUSD-OTC | 31,2 dias | 34 | 64,7% | 0,141 |
+
+Números parecidos, mas **não são evidência acumulada** — são dois ativos
+distintos. Não se pode somar as amostras nem tratar a segunda como
+confirmação da primeira. O CLI passou a avisar quando o backtest rodou em
+OTC, e `--no-otc` força a avaliação apenas do par real.
+
 ## 6. Recomendações
 
 ### Antes de usar dinheiro real

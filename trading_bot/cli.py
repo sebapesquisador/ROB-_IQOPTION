@@ -113,6 +113,8 @@ def cmd_backtest(args) -> int:
     settings = get_settings()
     if args.symbol:
         settings.symbol = args.symbol.upper()
+    if getattr(args, "no_otc", False):
+        settings.auto_otc = False
 
     broker = create_broker(settings)
     if not broker.connect():
@@ -146,6 +148,15 @@ def cmd_backtest(args) -> int:
               f"este ativo/timeframe.")
         print("  Para ampliar a amostra, use um timeframe maior "
               "(ex.: --candles 3000 com TIMEFRAME_MINUTES=15 cobre ~1 mês).")
+
+    if symbol.upper().endswith("-OTC"):
+        print()
+        print("⚠ ATENÇÃO: este backtest usou um ativo OTC.")
+        print("  O preço OTC é gerado pela própria corretora, não vem do mercado")
+        print("  interbancário. Resultado obtido em OTC NÃO se transfere para o par")
+        print("  real, e vice-versa — são séries de preço diferentes.")
+        print("  Para avaliar o par real, rode com o mercado aberto")
+        print("  (seg-sex, ~04h-18h de Brasília).")
     print()
 
     strat_cfg = settings.strategy.model_copy(update={"min_confidence": args.min_confidence})
@@ -155,7 +166,7 @@ def cmd_backtest(args) -> int:
         expiration_candles=args.expiration_candles,
     )
     names = [args.strategy] if args.strategy else [s["name"] for s in available_strategies()]
-    results = bt.compare(df, names, settings.symbol)
+    results = bt.compare(df, names, symbol)
 
     breakeven = 100 / (1 + args.payout)
     print("=" * 105)
@@ -263,6 +274,9 @@ def main(argv=None) -> int:
     p_bt.add_argument("--balance", type=float, default=1000.0)
     p_bt.add_argument("--min-confidence", type=float, default=0.55)
     p_bt.add_argument("--expiration-candles", type=int, default=1)
+    p_bt.add_argument("--no-otc", action="store_true",
+                      help="não cair para o par OTC: avalia só o ativo real "
+                           "(falha se o mercado estiver fechado)")
     p_bt.set_defaults(func=cmd_backtest)
 
     sub.add_parser("validate", help="valida a configuração").set_defaults(func=cmd_validate)
