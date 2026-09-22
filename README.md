@@ -106,6 +106,40 @@ credencial e sem risco.
 Cada uma devolve um sinal com **confiança de 0 a 1**. Sinais abaixo de
 `STRAT_MIN_CONFIDENCE` são descartados.
 
+### Comparando estratégias
+
+O comando abaixo testa **todas** de uma vez e ordena por resultado:
+
+```bash
+python -m trading_bot.cli backtest --candles 3000 --payout 0.85
+```
+
+Para isolar uma: `--strategy rsi_reversal`.
+
+⚠️ **Não escolha simplesmente a primeira da tabela.** Comparar 5 estratégias
+e ficar com a melhor infla o resultado mesmo quando nenhuma tem vantagem:
+numa simulação com 5 estratégias de acerto idêntico ao ponto de equilíbrio,
+a "campeã" aparenta **+9pp** de vantagem — puro ruído. Um acerto de 64,7%
+em 34 trades aparece por acaso em **42%** das vezes.
+
+Use a validação fora da amostra, que escolhe a campeã numa fatia dos dados
+e a julga noutra que ela nunca viu:
+
+```bash
+python -m trading_bot.cli backtest --candles 3000 --holdout
+```
+
+| Veredito no holdout | Significado |
+|---|---|
+| `REPROVADA FORA DA AMOSTRA` | A vantagem sumiu em dados novos — era ruído |
+| `INCONCLUSIVO` | Menos de 30 operações no teste; amplie a amostra |
+| `NÃO COMPROVADA` | Manteve vantagem, mas ainda pode ser sorte |
+| `SOBREVIVEU` | Vantagem preservada — o resultado mais forte possível |
+
+Regra prática: **quanto mais backtests você roda, maior a chance de achar
+sorte e confundi-la com vantagem** (10 rodadas ⇒ 40% de chance de um falso
+positivo). Decida o teste antes de rodá-lo, não depois de ver o resultado.
+
 ### Criando a sua
 
 ```python

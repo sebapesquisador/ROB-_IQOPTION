@@ -166,6 +166,10 @@ def cmd_backtest(args) -> int:
         expiration_candles=args.expiration_candles,
     )
     names = [args.strategy] if args.strategy else [s["name"] for s in available_strategies()]
+
+    if getattr(args, "holdout", False):
+        return _run_holdout(bt, df, names, symbol, args)
+
     results = bt.compare(df, names, symbol)
 
     breakeven = 100 / (1 + args.payout)
@@ -193,6 +197,88 @@ def cmd_backtest(args) -> int:
     print("  (0.05 corrigido para as 5 estratégias comparadas).")
     print("\n  Lembre-se: resultado passado não garante resultado futuro.")
     print("  Valide em conta demo por semanas antes de considerar dinheiro real.\n")
+    return 0
+
+
+def _run_holdout(bt, df, names, symbol, args) -> int:
+    """
+    Escolhe a campeã numa fatia dos dados e a testa noutra que ela nunca viu.
+
+    Comparar 5 estratégias e ficar com a melhor infla o resultado mesmo quando
+    nenhuma tem vantagem: numa simulação com 5 estratégias de acerto idêntico
+    ao ponto de equilíbrio, a "campeã" aparenta +9pp de vantagem só por ruído.
+    Escolher e avaliar nos mesmos dados sempre premia a sorte.
+
+    A separação temporal resolve isso: a estratégia é eleita no passado e
+    julgada no futuro. Se a vantagem era real, sobrevive; se era ruído do
+    período, desaparece — que é justamente o que se quer descobrir antes de
+    arriscar dinheiro.
+    """
+    split = int(len(df) * args.holdout_split)
+    treino, teste = df.iloc[:split], df.iloc[split:]
+
+    def periodo(d):
+        return (f"{d['timestamp'].iloc[0]:%d/%m %H:%M} → "
+                f"{d['timestamp'].iloc[-1]:%d/%m %H:%M}")
+
+    print("=" * 105)
+    print("  VALIDAÇÃO FORA DA AMOSTRA (holdout)")
+    print("=" * 105)
+    print(f"  seleção : {len(treino):>5} candles  ({periodo(treino)})")
+    print(f"  teste   : {len(teste):>5} candles  ({periodo(teste)})  ← nunca vistos na seleção")
+    print("=" * 105)
+
+    dentro = [r for r in bt.compare(treino, names, symbol) if "error" not in r]
+    if not dentro:
+        print("\n✖ Nenhuma estratégia produziu resultado na fatia de seleção.\n")
+        return 1
+
+    print(f"\n  1) SELEÇÃO — campeã escolhida aqui\n")
+    print(f"  {'estratégia':<22}{'trades':>7}{'acerto':>9}{'vantagem':>10}{'lucro':>11}{'p-valor':>9}")
+    print("-" * 105)
+    for r in sorted(dentro, key=lambda x: -x["net_profit"]):
+        print(f"  {r['strategy']:<22}{r['total_trades']:>7}{r['win_rate']:>8.1f}%"
+              f"{r['edge_pp']:>+9.1f}p{r['net_profit']:>+11.2f}{r.get('p_value', 1.0):>9.3f}")
+
+    campea = max(dentro, key=lambda r: r["net_profit"])
+    nome = campea["strategy"]
+    print(f"\n  → campeã na seleção: {nome} "
+          f"({campea['win_rate']:.1f}% de acerto, {campea['net_profit']:+.2f})")
+
+    fora = [r for r in bt.compare(teste, [nome], symbol) if "error" not in r]
+    if not fora:
+        print(f"\n✖ {nome} não gerou operações no período de teste — "
+              "amostra curta demais para validar.\n")
+        return 1
+    out = fora[0]
+
+    print(f"\n  2) TESTE — a mesma estratégia em dados inéditos\n")
+    print(f"  {'estratégia':<22}{'trades':>7}{'acerto':>9}{'vantagem':>10}{'lucro':>11}{'p-valor':>9}")
+    print("-" * 105)
+    print(f"  {out['strategy']:<22}{out['total_trades']:>7}{out['win_rate']:>8.1f}%"
+          f"{out['edge_pp']:>+9.1f}p{out['net_profit']:>+11.2f}{out.get('p_value', 1.0):>9.3f}")
+
+    variacao = out["win_rate"] - campea["win_rate"]
+    print("\n" + "=" * 105)
+    print(f"  acerto na seleção : {campea['win_rate']:.1f}%")
+    print(f"  acerto no teste   : {out['win_rate']:.1f}%   ({variacao:+.1f}pp)")
+    print("=" * 105)
+
+    if out["total_trades"] < 30:
+        print(f"  INCONCLUSIVO: apenas {out['total_trades']} operações no teste.")
+        print("  Rode com mais candles ou timeframe maior.")
+    elif out["edge_pp"] <= 0:
+        print("  REPROVADA FORA DA AMOSTRA: a vantagem sumiu em dados novos.")
+        print("  Era ruído do período de seleção — é assim que backtest bonito")
+        print("  vira prejuízo em conta real.")
+    elif out.get("p_value", 1.0) > 0.05:
+        print("  NÃO COMPROVADA: manteve vantagem, mas sem significância.")
+        print("  Sinal encorajador; ainda não é evidência. Amplie a amostra.")
+    else:
+        print("  SOBREVIVEU: vantagem preservada em dados inéditos.")
+        print("  É o resultado mais forte que um backtest pode dar — mesmo assim,")
+        print("  valide em DRY_RUN por semanas antes de arriscar dinheiro real.")
+    print("=" * 105 + "\n")
     return 0
 
 
@@ -274,6 +360,12 @@ def main(argv=None) -> int:
     p_bt.add_argument("--balance", type=float, default=1000.0)
     p_bt.add_argument("--min-confidence", type=float, default=0.55)
     p_bt.add_argument("--expiration-candles", type=int, default=1)
+    p_bt.add_argument("--holdout", action="store_true",
+                      help="escolhe a campeã numa fatia dos dados e a testa em "
+                           "outra, inédita — separa vantagem real de sorte")
+    p_bt.add_argument("--holdout-split", type=float, default=0.7,
+                      metavar="FRAC",
+                      help="fração dos dados usada para escolher (padrão 0.7)")
     p_bt.add_argument("--no-otc", action="store_true",
                       help="não cair para o par OTC: avalia só o ativo real "
                            "(falha se o mercado estiver fechado)")
