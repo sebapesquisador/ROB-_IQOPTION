@@ -119,13 +119,24 @@ def cmd_backtest(args) -> int:
         logger.error("falha ao conectar na corretora")
         return 1
 
-    print(f"\nObtendo {args.candles} candles de {settings.symbol}...")
+    symbol = broker.resolve_symbol(settings.symbol)
+    print(f"\nObtendo {args.candles} candles de {symbol}...")
     try:
-        df = broker.get_candles(
-            broker.resolve_symbol(settings.symbol), settings.timeframe_minutes, args.candles
-        )
+        df = broker.get_candles(symbol, settings.timeframe_minutes, args.candles)
+    except Exception as exc:
+        print(f"\n✖ Não foi possível obter os candles.\n  {exc}\n")
+        print("  Sugestões:")
+        print(f"    • Fora do pregão FOREX, use o par OTC:")
+        print(f"        python -m trading_bot.cli backtest --symbol {settings.symbol}-OTC")
+        print("    • Confirme o nome do ativo (EURUSD, GBPUSD, EURJPY...)")
+        print("    • Teste a estrutura sem corretora com BROKER=paper no .env\n")
+        return 1
     finally:
         broker.disconnect()
+
+    if len(df) < 100:
+        print(f"\n✖ Apenas {len(df)} candles retornados — insuficiente para backtest.\n")
+        return 1
 
     print(f"Período: {df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]}\n")
 

@@ -99,3 +99,45 @@ def setup_logging(level: str = "INFO", log_file: Path | None = None,
     # Silencia bibliotecas verbosas
     for noisy in ("websocket", "urllib3", "requests", "iqoptionapi", "httpx", "asyncio"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # A iqoptionapi emite avisos de timeout ("**warning** ... late 30 sec") no
+    # logger raiz e quebra em threads próprias. Não são erros do robô e não
+    # devem poluir o terminal do usuário.
+    logging.getLogger().addFilter(_IQNoiseFilter())
+    _silence_thread_exceptions()
+
+
+class _IQNoiseFilter(logging.Filter):
+    """Rebaixa avisos internos da iqoptionapi para DEBUG."""
+
+    _NOISE = ("**warning**", "get_digital_underlying_list_data",
+              "get_first_candles", "Connection is already closed")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not any(n in msg for n in self._NOISE)
+
+
+def _silence_thread_exceptions() -> None:
+    """
+    Impede que exceções nas threads internas da iqoptionapi despejem
+    traceback no terminal. Elas não afetam o robô — o adaptador já trata
+    a ausência de dados —, mas assustam sem necessidade.
+    """
+    import threading
+
+    previous = threading.excepthook
+
+    def hook(args):
+        name = getattr(args.thread, "name", "") or ""
+        if "get_digital_open" in name or "__get_digital_open" in name:
+            logging.getLogger("iqoptionapi").debug(
+                "exceção ignorada na thread %s: %s", name, args.exc_value
+            )
+            return
+        previous(args)
+
+    threading.excepthook = hook
