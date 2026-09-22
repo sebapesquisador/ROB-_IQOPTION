@@ -1,0 +1,125 @@
+/* Global Styles */
+body { 
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+  min-height: 100vh;
+}
+
+/* Navbar */
+.bg-gradient-primary {
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.pulse {
+  animation: pulse 2s infinite;
+}
+
+.card-animated {
+  animation: fadeInUp 0.5s ease-out;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card-animated:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3) !important;
+}
+
+/* Cards */
+.card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.37);
+  transition: all 0.3s ease;
+}
+
+.card-ativo { border-left: 4px solid #667eea; }
+.card-timeframe { border-left: 4px solid #17a2b8; }
+.card-estrategia { border-left: 4px solid #ffc107; }
+.card-winrate { border-left: 4px solid #28a745; }
+
+.card-profit-daily {
+  background: linear-gradient(135deg, #1abc9c 0%, #16a085 100%);
+  color: white;
+  border: none;
+}
+
+.card-profit-total {
+  background: linear-gradient(135deg, #f39c12 0%, #e74c3c 100%);
+  color: white;
+  border: none;
+}
+
+.icon-circle {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  color: white;
+}
+
+.bot-icon {
+  animation: pulse 3s infinite;
+}
+
+/* Table */
+.table-dark {
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+}
+
+.table-dark thead th {
+  background: rgba(102, 126, 234, 0.2);
+  border-bottom: 2px solid #667eea;
+}
+
+.table-hover tbody tr:hover {
+  background: rgba(102, 126, 234, 0.1);
+  cursor: pointer;
+}
+
+/* Toast */
+.toast {
+  background: rgba(40, 167, 69, 0.95);
+  backdrop-filter: blur(10px);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.toast-header {
+  background: rgba(0, 0, 0, 0.2);
+  color: white;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Chart Container */
+canvas {
+  max-height: 300px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .display-3 { font-size: 2rem; }
+  .h4 { font-size: 1.2rem; }
+}
