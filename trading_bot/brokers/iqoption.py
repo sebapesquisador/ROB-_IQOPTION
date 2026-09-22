@@ -230,8 +230,15 @@ class IQOptionBroker(Broker):
             logger.info("[iq] %s fechado, usando %s", base, otc)
             return otc
 
-        # Nenhum dos dois aberto: devolve o pedido e deixa o engine pular o ciclo
-        logger.warning("[iq] nem %s nem %s estão abertos", base, otc)
+        # A flag de disponibilidade da IQ Option não é confiável: já foi
+        # observada marcando ativos como fechados durante o pregão, com os
+        # candles sendo entregues normalmente. Não bloqueamos por causa dela —
+        # apenas registramos. A verdade vem da resposta de dados e do envio
+        # da ordem, que é onde a corretora de fato recusa.
+        logger.debug(
+            "[iq] %s e %s marcados como indisponíveis pela corretora; "
+            "seguindo mesmo assim (a flag costuma estar errada)", base, otc
+        )
         return base
 
     @staticmethod
@@ -277,16 +284,15 @@ class IQOptionBroker(Broker):
             raise BrokerError("API não conectada")
 
         tf_seconds = timeframe_minutes * 60
-        count = min(count, 1000)  # limite da API
 
-        raw = self._request_candles(symbol, tf_seconds, count)
+        raw = self._request_paginated(symbol, tf_seconds, count)
 
         # Par principal sem dados costuma significar mercado fechado:
         # tenta a versão OTC antes de desistir.
         if not raw and self.settings.auto_otc and not symbol.endswith("-OTC"):
             otc = f"{symbol.replace('-OTC', '')}-OTC"
             logger.info("[iq] sem candles para %s, tentando %s", symbol, otc)
-            raw = self._request_candles(otc, tf_seconds, count)
+            raw = self._request_paginated(otc, tf_seconds, count)
             if raw:
                 symbol = otc
 
@@ -320,8 +326,59 @@ class IQOptionBroker(Broker):
 
         return self.normalize_candles(df)
 
+    _MAX_PER_REQUEST = 1000  # teto da API por chamada
+
+    def _request_paginated(self, symbol: str, tf_seconds: int, count: int) -> list:
+        """
+        Busca `count` candles paginando para trás no tempo.
+
+        A API devolve no máximo 1000 candles por chamada. A versão anterior
+        simplesmente truncava o pedido com `min(count, 1000)`: quem pedia 3000
+        recebia 1000 sem qualquer aviso, e o backtest rodava sobre um terço
+        da amostra pretendida — justamente o que torna o resultado não
+        confiável. Agora encadeamos requisições até completar o pedido.
+        """
+        remaining = count
+        end_ts = int(time.time())
+        chunks: list[list] = []
+        seen_oldest: int | None = None
+
+        while remaining > 0:
+            batch_size = min(remaining, self._MAX_PER_REQUEST)
+            batch = self._request_candles(symbol, tf_seconds, batch_size, end_at=end_ts)
+            if not batch:
+                break
+
+            chunks.append(batch)
+            remaining -= len(batch)
+
+            # Próxima página termina imediatamente antes do candle mais antigo
+            oldest = min(int(c.get("from", c.get("at", 0))) for c in batch)
+            if seen_oldest is not None and oldest >= seen_oldest:
+                break  # a API parou de retroceder: não há mais histórico
+            seen_oldest = oldest
+            end_ts = oldest - 1
+
+            if len(batch) < batch_size:
+                break  # histórico esgotado
+
+        if not chunks:
+            return []
+
+        # Concatena e remove sobreposições entre páginas
+        merged: dict[int, dict] = {}
+        for batch in chunks:
+            for c in batch:
+                merged[int(c.get("from", c.get("at", 0)))] = c
+
+        ordered = [merged[k] for k in sorted(merged)]
+        if len(ordered) < count:
+            logger.info("[iq] %s: %d candles disponíveis (pedidos %d)",
+                        symbol, len(ordered), count)
+        return ordered[-count:]
+
     def _request_candles(self, symbol: str, tf_seconds: int, count: int,
-                         attempts: int = 3) -> list:
+                         attempts: int = 3, end_at: float | None = None) -> list:
         """
         Busca candles com retry. A API da IQ Option falha de forma
         intermitente sob carga; uma única tentativa derruba o robô à toa.
@@ -329,7 +386,10 @@ class IQOptionBroker(Broker):
         last_exc: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
-                raw = self.api.get_candles(symbol, tf_seconds, count, time.time())
+                raw = self.api.get_candles(
+                    symbol, tf_seconds, count,
+                    time.time() if end_at is None else end_at,
+                )
                 if raw:
                     return raw
                 logger.debug("[iq] tentativa %d/%d: resposta vazia para %s",

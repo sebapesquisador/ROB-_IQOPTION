@@ -178,3 +178,76 @@ class TestCalendarioForex:
 
         monkeypatch.setattr("trading_bot.brokers.iqoption.datetime", FakeDT)
         assert IQOptionBroker._forex_open_now() is expected
+
+
+class TestPaginacao:
+    """
+    Regressão: a versão anterior truncava com min(count, 1000). Quem pedia
+    3000 candles recebia 1000 sem aviso, e o backtest rodava sobre um terço
+    da amostra — produzindo o veredito "amostra insuficiente" sem que o
+    usuário entendesse a causa.
+    """
+
+    class PagedAPI:
+        TF = 300
+
+        def __init__(self, historico: int = 5000):
+            import time as _t
+            self.calls: list[tuple[int, int]] = []
+            self.historico = historico
+            # Ancorado no relógio real, pois o broker pagina a partir de time.time()
+            self.base = int(_t.time()) // self.TF * self.TF
+
+        def get_all_init_v2(self):
+            return None
+
+        def get_all_open_time(self):
+            return {}
+
+        def get_candles(self, symbol, tf, n, end):
+            self.calls.append((n, int(end)))
+            n = min(n, 1000)  # teto real da API
+            end_slot = int(end) // tf * tf
+            out = []
+            for i in range(n):
+                ts = end_slot - i * tf
+                if ts < self.base - self.historico * tf:
+                    break
+                out.append({"from": ts, "open": 1.1, "close": 1.1,
+                            "min": 1.09, "max": 1.11, "volume": 1})
+            return list(reversed(out))
+
+    @pytest.fixture
+    def paged(self):
+        b = IQOptionBroker(make_settings(auto_otc=False))
+        b.api = self.PagedAPI()
+        b._connected = True
+        return b
+
+    def test_entrega_o_total_pedido(self, paged):
+        df = paged.get_candles("EURUSD", 5, 3000)
+        assert len(df) == 3000
+
+    def test_faz_multiplas_chamadas(self, paged):
+        paged.get_candles("EURUSD", 5, 3000)
+        assert len(paged.api.calls) >= 3   # 1000 por chamada
+
+    def test_uma_chamada_quando_cabe(self, paged):
+        paged.get_candles("EURUSD", 5, 500)
+        assert len(paged.api.calls) == 1
+
+    def test_sem_duplicatas_entre_paginas(self, paged):
+        df = paged.get_candles("EURUSD", 5, 2500)
+        assert df["timestamp"].duplicated().sum() == 0
+
+    def test_ordem_cronologica(self, paged):
+        df = paged.get_candles("EURUSD", 5, 2500)
+        assert df["timestamp"].is_monotonic_increasing
+
+    def test_para_quando_historico_acaba(self):
+        b = IQOptionBroker(make_settings(auto_otc=False))
+        b.api = self.PagedAPI(historico=1500)
+        b._connected = True
+        df = b.get_candles("EURUSD", 5, 9000)
+        assert 0 < len(df) <= 1501        # devolve o que existe
+        assert len(b.api.calls) < 20      # não entra em laço infinito

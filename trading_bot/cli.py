@@ -138,7 +138,15 @@ def cmd_backtest(args) -> int:
         print(f"\n✖ Apenas {len(df)} candles retornados — insuficiente para backtest.\n")
         return 1
 
-    print(f"Período: {df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]}\n")
+    dias = (df["timestamp"].iloc[-1] - df["timestamp"].iloc[0]).total_seconds() / 86400
+    print(f"Recebidos: {len(df)} candles "
+          f"({df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]}, {dias:.1f} dias)")
+    if len(df) < args.candles:
+        print(f"⚠ Você pediu {args.candles}, mas só há {len(df)} disponíveis para "
+              f"este ativo/timeframe.")
+        print("  Para ampliar a amostra, use um timeframe maior "
+              "(ex.: --candles 3000 com TIMEFRAME_MINUTES=15 cobre ~1 mês).")
+    print()
 
     strat_cfg = settings.strategy.model_copy(update={"min_confidence": args.min_confidence})
     bt = Backtester(
