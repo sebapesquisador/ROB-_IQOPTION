@@ -74,12 +74,26 @@ function initCharts() {
 
 /* ---------------- Render ---------------- */
 function renderStatus(s) {
-  if (!s || !s.risk) return;
+  // Com o robô parado, `risk` é null — o painel deve continuar renderizando
+  // mesmo assim, em vez de congelar e parecer que travou.
+  if (!s) return;
   lastState = s.state;
-  const r = s.risk, st = r.stats || {};
+  const r = s.risk || {};
+  const st = r.stats || {};
 
   $('sub-broker').textContent =
     `${s.broker} · ${s.symbol} · ${s.timeframe_minutes}m · exp ${s.expiration_minutes}m · ${s.strategy}`;
+
+  // Conexão com a corretora — estado próprio, independente do robô estar operando
+  const connBadge = $('conn-badge');
+  if (connBadge) {
+    const connected = !!s.connected;
+    connBadge.className = 'badge ' + (connected ? 'badge-running' : 'badge-stopped');
+    connBadge.title = connected
+      ? `Conectado a ${s.broker}`
+      : `Sem conexão ativa com ${s.broker}. Normal com o robô parado — ele conecta ao iniciar.`;
+    $('conn-text').textContent = connected ? s.broker : `${s.broker} offline`;
+  }
 
   // Badges
   const modeBadge = $('mode-badge');
@@ -105,17 +119,20 @@ function renderStatus(s) {
   daily.textContent = fmtMoney(r.daily_pnl);
   daily.className = 'kpi-value ' + cls(r.daily_pnl);
   $('kpi-daily-trades').textContent =
-    `${r.daily_trades} operações · ${r.daily_wins}V / ${r.daily_losses}D`;
+    `${r.daily_trades ?? 0} operações · ${r.daily_wins ?? 0}V / ${r.daily_losses ?? 0}D`;
 
   const wr = st.win_rate || 0;
   const wrEl = $('kpi-winrate');
-  wrEl.textContent = fmtPct(wr);
-  wrEl.className = 'kpi-value ' + (wr >= 54.05 ? 'pos' : wr > 0 ? 'neg' : 'neutral');
+  wrEl.textContent = st.total_trades ? fmtPct(wr) : '—';
+  wrEl.className = 'kpi-value ' + (!st.total_trades ? 'neutral'
+    : (wr >= 54.05 ? 'pos' : 'neg'));
 
   const pf = st.profit_factor;
   const pfEl = $('kpi-pf');
-  pfEl.textContent = pf == null ? '∞' : pf.toFixed(2);
-  pfEl.className = 'kpi-value ' + ((pf == null || pf >= 1) ? 'pos' : 'neg');
+  // Sem trades ainda não existe fator de lucro — mostrar "∞" seria enganoso
+  pfEl.textContent = !st.total_trades ? '—' : (pf == null ? '∞' : pf.toFixed(2));
+  pfEl.className = 'kpi-value ' + (!st.total_trades ? 'neutral'
+    : ((pf == null || pf >= 1) ? 'pos' : 'neg'));
   $('kpi-expectancy').textContent = 'expectativa ' + fmtMoney(st.expectancy);
 
   const ddEl = $('kpi-dd');
