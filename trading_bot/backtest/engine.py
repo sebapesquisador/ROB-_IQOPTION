@@ -20,6 +20,7 @@ Premissas conservadoras adotadas aqui:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
@@ -88,20 +89,61 @@ class BacktestResult:
             "breakeven_win_rate": round(self.breakeven_win_rate, 2),
             "edge_pp": round(self.edge, 2),
             "profitable": self.is_profitable,
+            "p_value": round(self.p_value, 4),
             "verdict": self._verdict(),
             **self.stats.to_dict(),
         }
+
+    @property
+    def p_value(self) -> float:
+        """
+        Probabilidade de obter este número de vitórias (ou mais) por puro
+        acaso, se a estratégia não tivesse vantagem nenhuma.
+
+        Teste binomial unilateral exato. Sem isto, uma sequência de sorte
+        em poucas operações é promovida a "APROVADA": 30 vitórias em 45
+        parecem 66,7% de acerto, mas saem do acaso em 1 de cada 17 amostras
+        — não é evidência de vantagem.
+        """
+        n = self.stats.total_trades
+        if n == 0:
+            return 1.0
+        k = self.stats.wins
+        p = self.breakeven_win_rate / 100.0
+        if k <= 0:
+            return 1.0
+
+        # P(X >= k) em espaço logarítmico: math.comb(1193, 594) estoura o
+        # float se calculado diretamente.
+        log_p, log_q = math.log(p), math.log1p(-p)
+        total = 0.0
+        for i in range(k, n + 1):
+            log_term = (math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1)
+                        + i * log_p + (n - i) * log_q)
+            total += math.exp(log_term)
+        return min(1.0, total)
+
+    # Nível exigido já corrigido para o número de estratégias comparadas
+    # (Bonferroni): testar 5 e ficar com a melhor infla o falso positivo
+    # de 5% para ~23%.
+    ALPHA = 0.05
+    N_COMPARISONS = 5
 
     def _verdict(self) -> str:
         if self.stats.total_trades < 30:
             return "amostra insuficiente — não confie neste resultado"
         if self.edge <= 0:
             return "REPROVADA: abaixo do ponto de equilíbrio, perde dinheiro no longo prazo"
+
+        alpha = self.ALPHA / self.N_COMPARISONS
+        if self.p_value > alpha:
+            return (f"NÃO COMPROVADA: vantagem pode ser sorte "
+                    f"(p={self.p_value:.3f}, exigido <{alpha:.3f}) — precisa de mais dados")
         if self.edge < 2:
             return "MARGINAL: vantagem dentro do ruído estatístico"
         if self.stats.max_drawdown_pct > 30:
             return "ARRISCADA: lucrativa, mas com drawdown alto demais"
-        return "APROVADA: vantagem positiva com drawdown controlado"
+        return "APROVADA: vantagem positiva, estatisticamente significativa"
 
     def to_dict(self) -> dict[str, Any]:
         return {

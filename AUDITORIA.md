@@ -316,6 +316,32 @@ python -m trading_bot.cli backtest --candles 5000 --payout 0.85
 
 ---
 
+### 5.1 Por que "acerto alto" não basta: significância estatística
+
+Um backtest real de 43 dias do EURUSD (3000 candles de 5 min) produziu:
+
+| estratégia | trades | acerto | vantagem | p-valor | veredito |
+|---|---|---|---|---|---|
+| rsi_reversal | 45 | 66,7% | +12,6pp | 0,060 | NÃO COMPROVADA |
+
+À primeira vista parece excelente: 66,7% de acerto contra um equilíbrio de
+54,05%. Mas são apenas 45 operações. O teste binomial mostra que o acaso
+produz esse resultado — ou melhor — em **1 de cada 17 amostras**, mesmo numa
+estratégia sem vantagem nenhuma.
+
+Pior: comparamos **5 estratégias** e ficamos com a melhor. A chance de ao
+menos uma parecer boa por pura sorte é de **26%**. É o problema das
+comparações múltiplas — quanto mais se testa, mais fácil encontrar sorte e
+confundi-la com habilidade.
+
+Por isso o veredito passou a exigir p-valor abaixo de **0,01** (0,05
+corrigido por Bonferroni para as 5 estratégias), além dos critérios
+anteriores de amostra mínima, vantagem e drawdown. Para confirmar uma
+vantagem real de +12,6pp com confiança seriam necessárias **~93 operações**
+— cerca de 89 dias no ritmo observado.
+
+Agir sobre os 45 trades seria apostar dinheiro real em ruído.
+
 ## 6. Recomendações
 
 ### Antes de usar dinheiro real

@@ -158,12 +158,12 @@ def cmd_backtest(args) -> int:
     results = bt.compare(df, names, settings.symbol)
 
     breakeven = 100 / (1 + args.payout)
-    print("=" * 96)
+    print("=" * 105)
     print(f"  BACKTEST — payout {args.payout:.0%} | acerto de equilíbrio: {breakeven:.2f}%")
-    print("=" * 96)
+    print("=" * 105)
     print(f"  {'estratégia':<22}{'trades':>7}{'acerto':>9}{'vantagem':>10}"
-          f"{'lucro':>11}{'PF':>7}{'DD%':>7}")
-    print("-" * 96)
+          f"{'lucro':>11}{'PF':>7}{'DD%':>7}{'p-valor':>9}")
+    print("-" * 105)
     for r in results:
         if "error" in r:
             print(f"  {r['strategy']:<22}  erro: {r['error']}")
@@ -171,12 +171,15 @@ def cmd_backtest(args) -> int:
         pf = r["profit_factor"]
         print(f"  {r['strategy']:<22}{r['total_trades']:>7}{r['win_rate']:>8.1f}%"
               f"{r['edge_pp']:>+9.1f}p{r['net_profit']:>+11.2f}"
-              f"{(pf if pf is not None else 99.99):>7.2f}{r['max_drawdown_pct']:>7.1f}")
-    print("=" * 96)
+              f"{(pf if pf is not None else 99.99):>7.2f}{r['max_drawdown_pct']:>7.1f}"
+              f"{r.get('p_value', 1.0):>9.3f}")
+    print("=" * 105)
     for r in results:
         if "error" not in r:
             print(f"  {r['strategy']:<22} {r['verdict']}")
-    print("=" * 96)
+    print("=" * 105)
+    print("\n  p-valor = chance de a vantagem ser sorte. Exigimos <0.010")
+    print("  (0.05 corrigido para as 5 estratégias comparadas).")
     print("\n  Lembre-se: resultado passado não garante resultado futuro.")
     print("  Valide em conta demo por semanas antes de considerar dinheiro real.\n")
     return 0
