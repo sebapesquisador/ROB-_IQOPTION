@@ -1,0 +1,41 @@
+# ==== Segredos (NUNCA commitar) ====
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+config_api.py
+credentials.json
+secrets.yaml
+
+# ==== Python ====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# ==== Dados e estado em runtime ====
+*.log
+logs/
+data/*.db
+data/*.sqlite3
+data/*.json
+data/*.csv
+!data/.gitkeep
+state.json
+history.json
+
+# ==== Sistema ====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

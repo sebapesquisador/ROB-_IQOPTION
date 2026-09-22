@@ -1,0 +1,17 @@
+# Núcleo
+pandas>=2.0
+numpy>=1.24
+pydantic>=2.5
+pydantic-settings>=2.1
+python-dotenv>=1.0
+
+# API e painel
+fastapi>=0.109
+uvicorn[standard]>=0.27
+jinja2>=3.1
+
+# Corretoras (opcionais — instale a que for usar)
+# IQ Option:
+#   pip install -U git+https://github.com/iqoptionapi/iqoptionapi.git
+# Binance:
+#   pip install python-binance>=1.0.19

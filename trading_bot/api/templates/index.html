@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Bot — Painel de Controle</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◆</span>
+    <div>
+      <h1>Trading Bot</h1>
+      <span class="subtitle" id="sub-broker">carregando…</span>
+    </div>
+  </div>
+
+  <div class="status-cluster">
+    <span id="mode-badge" class="badge badge-dry">DRY-RUN</span>
+    <span id="state-badge" class="badge badge-stopped">
+      <span class="dot"></span><span id="state-text">parado</span>
+    </span>
+  </div>
+
+  <div class="controls">
+    <button id="btn-start" class="btn btn-start">Iniciar</button>
+    <button id="btn-pause" class="btn btn-pause" disabled>Pausar</button>
+    <button id="btn-stop"  class="btn btn-stop"  disabled>Parar</button>
+  </div>
+</header>
+
+<div id="toast-host" class="toast-host"></div>
+
+<main>
+  <!-- Alerta de risco -->
+  <div id="risk-alert" class="risk-alert hidden"></div>
+
+  <!-- KPIs -->
+  <section class="kpi-grid">
+    <div class="kpi">
+      <span class="kpi-label">Saldo</span>
+      <strong class="kpi-value" id="kpi-balance">—</strong>
+      <span class="kpi-sub" id="kpi-peak">pico —</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Resultado do dia</span>
+      <strong class="kpi-value" id="kpi-daily">—</strong>
+      <span class="kpi-sub" id="kpi-daily-trades">— operações</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Taxa de acerto</span>
+      <strong class="kpi-value" id="kpi-winrate">—</strong>
+      <span class="kpi-sub" id="kpi-breakeven">equilíbrio 54,1%</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Fator de lucro</span>
+      <strong class="kpi-value" id="kpi-pf">—</strong>
+      <span class="kpi-sub" id="kpi-expectancy">expectativa —</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Drawdown</span>
+      <strong class="kpi-value" id="kpi-dd">—</strong>
+      <span class="kpi-sub" id="kpi-streak">sequência —</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Próxima entrada</span>
+      <strong class="kpi-value" id="kpi-stake">—</strong>
+      <span class="kpi-sub" id="kpi-open">0 abertas</span>
+    </div>
+  </section>
+
+  <!-- Uso do limite diário -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Consumo do limite de perda diária</h2>
+      <span id="loss-budget-text" class="muted">—</span>
+    </div>
+    <div class="progress"><div id="loss-bar" class="progress-fill"></div></div>
+  </section>
+
+  <div class="two-col">
+    <!-- Coluna esquerda -->
+    <div>
+      <section class="panel">
+        <div class="panel-head"><h2>Curva de capital</h2></div>
+        <div class="chart-box"><canvas id="equityChart"></canvas></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Preço e indicadores</h2>
+          <span class="muted" id="candle-symbol">—</span>
+        </div>
+        <div class="chart-box"><canvas id="priceChart"></canvas></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Operações recentes</h2>
+          <span class="muted" id="trades-count">—</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Hora</th><th>Ativo</th><th>Dir.</th><th>Valor</th>
+                  <th>Estratégia</th><th>Conf.</th><th>Resultado</th><th>PnL</th></tr>
+            </thead>
+            <tbody id="trades-body">
+              <tr><td colspan="8" class="empty">Nenhuma operação ainda</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Coluna direita -->
+    <div>
+      <section class="panel">
+        <div class="panel-head"><h2>Último sinal</h2></div>
+        <div id="signal-box" class="signal-box">
+          <div class="signal-dir" id="signal-dir">AGUARDANDO</div>
+          <div class="signal-reason" id="signal-reason">—</div>
+          <div class="conf-row">
+            <span class="muted">Confiança</span>
+            <div class="conf-bar"><div id="conf-fill" class="conf-fill"></div></div>
+            <span id="conf-value">—</span>
+          </div>
+          <div id="signal-indicators" class="chips"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Configuração</h2></div>
+        <div class="form">
+          <label>Estratégia
+            <select id="cfg-strategy"></select>
+          </label>
+          <label>Ativo
+            <input id="cfg-symbol" type="text" placeholder="EURUSD">
+          </label>
+          <div class="form-row">
+            <label>Timeframe (min)
+              <input id="cfg-timeframe" type="number" min="1" max="1440">
+            </label>
+            <label>Expiração (min)
+              <input id="cfg-expiration" type="number" min="1" max="1440">
+            </label>
+          </div>
+          <label>Confiança mínima <span id="conf-label" class="muted"></span>
+            <input id="cfg-confidence" type="range" min="0" max="1" step="0.05">
+          </label>
+          <div class="form-row">
+            <label>Entrada (% do saldo)
+              <input id="cfg-stake" type="number" step="0.1" min="0.1" max="5">
+            </label>
+            <label>Perda máx. diária (%)
+              <input id="cfg-maxloss" type="number" step="0.5" min="0.5" max="50">
+            </label>
+          </div>
+          <label class="switch">
+            <input id="cfg-dryrun" type="checkbox">
+            <span>Modo simulação (dry-run)</span>
+          </label>
+          <button id="btn-save" class="btn btn-primary">Salvar configuração</button>
+          <p class="hint">Mercado e estratégia só podem ser alterados com o robô parado.</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Backtest</h2></div>
+        <div class="form">
+          <div class="form-row">
+            <label>Candles
+              <input id="bt-candles" type="number" value="1000" min="200" max="5000">
+            </label>
+            <label>Payout
+              <input id="bt-payout" type="number" value="0.85" step="0.01" min="0.1" max="2">
+            </label>
+          </div>
+          <button id="btn-backtest" class="btn btn-primary">Testar todas as estratégias</button>
+          <div id="bt-results" class="bt-results"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Eventos</h2></div>
+        <div id="events-list" class="events"></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
