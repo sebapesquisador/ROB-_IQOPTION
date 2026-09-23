@@ -361,6 +361,58 @@ distintos. Não se pode somar as amostras nem tratar a segunda como
 confirmação da primeira. O CLI passou a avisar quando o backtest rodou em
 OTC, e `--no-otc` força a avaliação apenas do par real.
 
+### 5.3 É possível ganhar dinheiro em opções binárias?
+
+A resposta honesta tem duas partes.
+
+**Matematicamente não é impossível — mas a barreira é brutal.**
+
+Com payout de 85%, cada operação a 50% de acerto tem valor esperado de
+**-7,50%**. Isso é a vantagem da casa, e ela se compara assim:
+
+| Jogo | Vantagem da casa |
+|---|---|
+| Blackjack (estratégia básica) | 0,50% |
+| Roleta europeia | 2,70% |
+| Roleta americana | 5,26% |
+| **Binária payout 85%** | **7,50%** |
+| **Binária payout 80%** | **10,00%** |
+
+Opção binária tem vantagem da casa **maior que a roleta**. Apostando 2% do
+capital por operação a 50% de acerto, o capital decai de $1.000 para $222
+em 1.000 operações — sem nenhum azar, apenas pela matemática.
+
+Para empatar é preciso acertar **54,05%**: prever a direção do EURUSD em 5
+minutos com 8% mais frequência que uma moeda, de forma persistente.
+
+**Com vantagem real, o lucro existe** — 56% de acerto rende +3,60% por
+operação. O problema é comprovar que a vantagem é real:
+
+| Acerto real | Trades para comprovar | Tempo a 1 trade/dia |
+|---|---|---|
+| 56% | ~5.130 | 14,1 anos |
+| 58% | ~1.244 | 3,4 anos |
+| 60% | ~546 | 1,5 anos |
+
+Vantagens pequenas são indistinguíveis de sorte em qualquer amostra que se
+consiga coletar numa vida útil de estratégia. E mesmo com 56% comprovado,
+apostar 10% do capital leva à ruína em **35% das simulações**.
+
+**O teste do filtro de confiança**
+
+Elevar `--min-confidence` faz `bollinger_reversion` passar de -75,26 para
++33,90 (60,7% de acerto). Parece a solução — não é. O número de operações
+despenca de 297 para 28, e o p-valor fica em 0,304: sem significância
+alguma. Com 0,85 sobra **1 operação**. Isso não é encontrar vantagem, é
+reduzir a amostra até o ruído parecer sinal. É overfitting puro.
+
+**Conclusão:** os backtests não provam que ganhar é impossível. Provam que
+nenhuma das 5 estratégias técnicas testadas supera o payout neste ativo, e
+que o payout de 85% é uma barreira mais alta que a da roleta. Quem ganha de
+forma consistente em binárias opera com vantagem estrutural (informação,
+latência, arbitragem de preço), não com indicadores sobre candles — que é
+o que este robô, e qualquer robô de análise técnica, faz.
+
 ## 6. Recomendações
 
 ### Antes de usar dinheiro real
