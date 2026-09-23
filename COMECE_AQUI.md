@@ -1,0 +1,179 @@
+# Comece aqui
+
+Guia prático, na ordem. Não pule o passo 1.
+
+---
+
+## Passo 1 — Troque sua senha da IQ Option (faça agora)
+
+Sua senha da IQ Option está **em texto puro no histórico do GitHub**, em um
+repositório público. Qualquer pessoa consegue lê-la, mesmo tendo eu já
+removido o arquivo — o histórico do Git guarda todas as versões anteriores.
+
+O que fazer, nesta ordem:
+
+1. Entre em <https://iqoption.com> → perfil → **Segurança** → trocar senha.
+   Use uma senha nova, que você não use em nenhum outro site.
+2. Na mesma tela, ative a **verificação em duas etapas (2FA)**.
+3. Se você usava essa mesma senha em outro lugar (e-mail, banco), troque lá
+   também.
+
+> Já fiz isto: [ ]
+
+**Por que não basta apagar o arquivo:** o Git guarda o passado. Limpar de
+verdade exige reescrever o histórico (`git filter-repo`) ou criar um
+repositório novo. Trocar a senha resolve o risco imediato e é o que
+importa hoje.
+
+---
+
+## Passo 2 — Entenda o que os testes mostraram
+
+Você rodou o backtest várias vezes. O resumo, sem jargão:
+
+**As 5 estratégias do robô, somadas, perderam 7,56% a cada operação.**
+A "vantagem da casa" da IQ Option com payout de 85% é de 7,50%.
+
+Os números batem. Isso significa que as estratégias não estavam prevendo
+nada — estavam apenas pagando a taxa da corretora, operação após operação.
+
+Para comparação:
+
+| Jogo | Vantagem da casa |
+|---|---|
+| Roleta europeia | 2,70% |
+| Roleta americana | 5,26% |
+| **Opção binária, payout 85%** | **7,50%** |
+
+Opção binária tem vantagem da casa **maior que a roleta**.
+
+**E aquele resultado de 61,5% de acerto?** Foram 13 operações. Rodando o
+mesmo comando 5 minutos depois, uma única operação a mais mudou o resultado
+de -1,06 para +17,62. Com amostra desse tamanho, o acaso sozinho produz
+qualquer coisa entre 26% e 82% de acerto.
+
+---
+
+## Passo 3 — Escolha o seu caminho
+
+### Caminho A — Parar por aqui (o que eu recomendo)
+
+Você já tem a resposta que o projeto foi feito para dar: **estas estratégias
+não ganham dinheiro neste formato**. Seu prejuízo original, com 38,5% de
+acerto, era matematicamente esperado.
+
+Parar agora custa zero e você sai sabendo o porquê.
+
+### Caminho B — Continuar testando, sem dinheiro real
+
+Se quiser explorar mais, o próximo teste legítimo é ampliar a amostra.
+
+**1.** Abra o arquivo `.env` no VSCode e altere estas duas linhas:
+
+```env
+TIMEFRAME_MINUTES=15
+EXPIRATION_MINUTES=15
+```
+
+**2.** Salve e rode:
+
+```powershell
+python -m trading_bot.cli backtest --candles 3000 --holdout
+```
+
+Com 15 minutos por candle, 3000 candles cobrem cerca de 4 meses — amostra
+suficiente para um veredito confiável.
+
+**3.** Leia o veredito final:
+
+| Resultado | O que significa | O que fazer |
+|---|---|---|
+| `REPROVADA FORA DA AMOSTRA` | Não funciona | Pare. Volte ao Caminho A |
+| `INCONCLUSIVO` | Ainda faltam dados | Pare. Mais tentativas só aumentam a chance de erro |
+| `NÃO COMPROVADA` | Pode ser sorte | Pare |
+| `SOBREVIVEU` | Único resultado que vale | Vá para o Passo 4 |
+
+**Regra importante:** rode **uma vez** e aceite o resultado. Cada nova
+tentativa com parâmetros diferentes aumenta a chance de encontrar sorte e
+confundi-la com vantagem — com 10 tentativas, essa chance chega a 40%.
+
+### Caminho C — Operar em conta demo
+
+Só se o Passo 3 der `SOBREVIVEU`. Nunca antes.
+
+---
+
+## Passo 4 — Se e somente se algo sobreviveu
+
+**1.** No `.env`, confirme que está tudo assim:
+
+```env
+DRY_RUN=true
+BROKER=iqoption
+ACCOUNT_MODE=demo
+RISK_PERCENT_STAKE=1.0
+RISK_MAX_DAILY_LOSS_PCT=3.0
+RISK_MAX_CONSECUTIVE_LOSSES=3
+RISK_MAX_TRADES_PER_DAY=10
+RISK_MARTINGALE_ENABLED=false
+```
+
+**2.** Rode o robô em simulação:
+
+```powershell
+python -m trading_bot.cli run
+```
+
+**3.** Deixe rodando por **2 a 4 semanas**. Compare o resultado real com o
+que o backtest previu. Se divergirem, o backtest estava errado.
+
+**Não passe para dinheiro real** sem essas semanas de comparação.
+
+---
+
+## Comandos que você vai usar
+
+```powershell
+# Atualizar o projeto (sempre antes de testar)
+git fetch origin
+git reset --hard origin/arena/01a0c98e-rob-iqoption
+
+# Ver se está tudo configurado
+python -m trading_bot.cli validate
+
+# Backtest honesto (o que importa)
+python -m trading_bot.cli backtest --candles 3000 --holdout
+
+# Painel de controle no navegador
+python -m trading_bot.cli dashboard
+# depois abra http://localhost:8000
+
+# Rodar o robô (respeita DRY_RUN do .env)
+python -m trading_bot.cli run
+```
+
+---
+
+## Sobre o martingale
+
+O robô tem martingale, **desligado por padrão**. Deixe desligado.
+
+A ideia é dobrar a aposta após cada perda. O problema: 7 derrotas seguidas
+acontecem em 88,6% das sequências de 500 operações. Na 8ª você precisaria
+apostar **128 vezes** a aposta inicial. É assim que contas zeram.
+
+---
+
+## A conta que explica tudo
+
+Com payout de 85%, você precisa acertar **54,05%** apenas para empatar.
+
+- Acertou 50%? Perde dinheiro.
+- Acertou 53%? Ainda perde.
+- Acertar 54,05% é empatar, sem lucro.
+
+Acertar mais que isso, de forma consistente, significa prever a direção do
+EURUSD nos próximos 5 minutos com mais frequência que o acaso — usando
+indicadores que todo mundo no mercado já conhece e já estão no preço.
+
+Os testes que você rodou mostraram que as 5 estratégias não conseguem.
