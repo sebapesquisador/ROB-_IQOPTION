@@ -192,9 +192,35 @@ O que cada opção faz:
 A coluna **payoff** no relatório é ganho médio ÷ perda média — em spot ela
 importa mais que a coluna de acerto.
 
-### Antes de conectar de verdade
+### Para backtestar você NÃO precisa de chave nenhuma
 
-O adaptador Binance exige `python-binance`, que não vem instalado:
+Os candles da Binance são dados públicos. Basta no `.env`:
+
+```env
+BROKER=binance
+SYMBOL=BTCUSDT
+TIMEFRAME_MINUTES=15
+```
+
+Deixe `BINANCE_API_KEY` e `BINANCE_API_SECRET` **vazios**. O robô conecta em
+modo somente leitura, baixa o histórico e recusa qualquer envio de ordem.
+Nem `python-binance` é necessário nessa etapa.
+
+⚠️ Se você copiou `BINANCE_API_KEY=sua_chave` literalmente do exemplo, o
+robô agora avisa em vez de tentar conectar com um valor falso. Apague o
+conteúdo e deixe em branco.
+
+### Backtest com dados reais da mainnet
+
+```powershell
+python -m trading_bot.cli backtest-spot --candles 3000 --stop 1.0 --target 2.0
+```
+
+Os candles vêm **sempre da mainnet**, mesmo com `BINANCE_TESTNET=true`. O
+histórico da testnet é gerado por um motor de testes com liquidez
+artificial — backtestar sobre ele mede ficção, não mercado.
+
+### Só quando for operar de verdade
 
 ```powershell
 python -m pip install python-binance
@@ -203,19 +229,17 @@ python -m pip install python-binance
 E no `.env`:
 
 ```env
-BROKER=binance
-BINANCE_API_KEY=sua_chave
-BINANCE_API_SECRET=seu_segredo
+BINANCE_API_KEY=sua_chave_real_aqui
+BINANCE_API_SECRET=seu_segredo_real_aqui
 BINANCE_TESTNET=true
-SYMBOL=BTCUSDT
+DRY_RUN=true
 ```
 
-**Comece pela testnet** (`BINANCE_TESTNET=true`): é um ambiente da própria
-Binance com dinheiro fictício. Crie as chaves em
-<https://testnet.binance.vision>.
+**Comece pela testnet**: ambiente da própria Binance, com dinheiro
+fictício. Crie as chaves em <https://testnet.binance.vision>.
 
 Quando criar chaves reais, **nunca habilite saque** — marque apenas leitura
-e negociação.
+e negociação (Enable Reading + Enable Spot Trading).
 
 ---
 

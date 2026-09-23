@@ -48,23 +48,50 @@ class BinanceBroker(Broker):
         self.take_profit_pct = take_profit_pct
         self._filters: dict[str, dict] = {}
         self._time_offset = 0
+        # Sem credenciais o adaptador ainda lê dados públicos, mas recusa ordens.
+        self._read_only = False
 
     # ---- Ciclo de vida -------------------------------------------------
 
+    # Valores de exemplo que o usuário pode ter copiado sem substituir.
+    _PLACEHOLDERS = {
+        "sua_chave", "seu_segredo", "sua_api_key", "seu_api_secret",
+        "cole_sua_testnet_api_key_aqui", "cole_sua_testnet_secret_key_aqui",
+        "cole_sua_mainnet_api_key_aqui", "cole_sua_mainnet_secret_key_aqui",
+        "your_api_key", "your_api_secret", "changeme",
+    }
+
+    @classmethod
+    def _e_placeholder(cls, valor: Optional[str]) -> bool:
+        return bool(valor) and valor.strip().lower() in cls._PLACEHOLDERS
+
     def connect(self) -> bool:
+        key, secret = self.settings.binance_api_key, self.settings.binance_api_secret
+
+        if self._e_placeholder(key) or self._e_placeholder(secret):
+            raise ConnectionError_(
+                "BINANCE_API_KEY/BINANCE_API_SECRET ainda estão com o valor de "
+                "exemplo do .env.example. Substitua pelas suas chaves reais — "
+                "crie em https://testnet.binance.vision para a testnet."
+            )
+
+        # Dados de mercado (candles) são públicos na Binance: sem chave, o
+        # adaptador ainda serve para backtest. Só a execução de ordens exige
+        # credencial, e é onde a recusa acontece.
+        if not (key and secret):
+            self._read_only = True
+            self._connected = True
+            logger.info("[binance] conectado em modo SOMENTE LEITURA "
+                        "(sem chaves: dados públicos, sem envio de ordens)")
+            return True
+
         try:
             from binance.client import Client
         except ImportError as exc:
             raise ConnectionError_(
                 "Biblioteca python-binance não instalada. "
-                "Instale com: pip install -r requirements.txt"
+                "Instale com: python -m pip install python-binance"
             ) from exc
-
-        key, secret = self.settings.binance_api_key, self.settings.binance_api_secret
-        if not (key and secret):
-            raise ConnectionError_(
-                "BINANCE_API_KEY e BINANCE_API_SECRET não configurados no .env"
-            )
 
         testnet = self.settings.binance_testnet or self.settings.account_mode.value == "demo"
         self.client = Client(key, secret, testnet=testnet)
@@ -148,6 +175,45 @@ class BinanceBroker(Broker):
 
     # ---- Dados ---------------------------------------------------------
 
+    # Candles sempre da mainnet: o histórico da testnet é gerado por um motor
+    # de testes com liquidez artificial e não reflete o mercado real. Um
+    # backtest sobre esses dados mede ficção. A testnet continua valendo para
+    # testar execução de ordens, que é o que ela existe para fazer.
+    _PUBLIC_KLINES = "https://api.binance.com/api/v3/klines"
+    _MAX_PER_REQUEST = 1000
+
+    def _fetch_klines_publico(self, symbol: str, interval: str,
+                              limit: int, end_ms: Optional[int] = None) -> list:
+        """Lê klines pelo endpoint público, sem exigir credencial."""
+        import json
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
+        if end_ms is not None:
+            params["endTime"] = end_ms
+        url = f"{self._PUBLIC_KLINES}?{urllib.parse.urlencode(params)}"
+
+        ultimo: Exception | None = None
+        for tentativa in range(1, 4):
+            try:
+                with urllib.request.urlopen(url, timeout=20) as resp:
+                    return json.load(resp)
+            except urllib.error.HTTPError as exc:
+                corpo = exc.read().decode("utf-8", "replace")[:200]
+                if exc.code == 400 and "Invalid symbol" in corpo:
+                    raise BrokerError(
+                        f"Símbolo '{symbol}' não existe na Binance. "
+                        "Use o formato sem barra, como BTCUSDT ou ETHUSDT."
+                    ) from exc
+                ultimo = exc
+            except Exception as exc:
+                ultimo = exc
+            if tentativa < 3:
+                time.sleep(tentativa)
+        raise BrokerError(f"Falha ao obter klines de {symbol}: {ultimo}")
+
     def get_candles(self, symbol: str, timeframe_minutes: int, count: int) -> pd.DataFrame:
         interval = _TF_MAP.get(timeframe_minutes)
         if interval is None:
@@ -155,17 +221,46 @@ class BinanceBroker(Broker):
                 f"Timeframe {timeframe_minutes}min não suportado. "
                 f"Use um de: {sorted(_TF_MAP)}"
             )
-        try:
-            klines = self.client.get_klines(
-                symbol=symbol, interval=interval, limit=min(count, 1000)
-            )
-        except Exception as exc:
-            raise BrokerError(f"Falha ao obter klines de {symbol}: {exc}") from exc
 
-        if not klines:
+        # Pagina para trás até completar o pedido. Truncar em 1000 sem avisar
+        # foi exatamente o bug que distorceu os backtests da IQ Option.
+        restante = count
+        fim_ms: Optional[int] = None
+        paginas: list[list] = []
+        mais_antigo_visto: Optional[int] = None
+
+        while restante > 0:
+            lote_tam = min(restante, self._MAX_PER_REQUEST)
+            lote = self._fetch_klines_publico(symbol, interval, lote_tam, fim_ms)
+            if not lote:
+                break
+
+            paginas.append(lote)
+            restante -= len(lote)
+
+            mais_antigo = int(lote[0][0])
+            if mais_antigo_visto is not None and mais_antigo >= mais_antigo_visto:
+                break  # a API parou de retroceder
+            mais_antigo_visto = mais_antigo
+            fim_ms = mais_antigo - 1
+
+            if len(lote) < lote_tam:
+                break  # histórico esgotado
+
+        if not paginas:
             raise BrokerError(f"Nenhum kline retornado para {symbol}")
 
-        df = pd.DataFrame(klines, columns=[
+        unicos: dict[int, list] = {}
+        for lote in paginas:
+            for k in lote:
+                unicos[int(k[0])] = k
+        ordenados = [unicos[t] for t in sorted(unicos)][-count:]
+
+        if len(ordenados) < count:
+            logger.info("[binance] %s: %d candles disponíveis (pedidos %d)",
+                        symbol, len(ordenados), count)
+
+        df = pd.DataFrame(ordenados, columns=[
             "open_time", "open", "high", "low", "close", "volume",
             "close_time", "quote_volume", "trades",
             "taker_base", "taker_quote", "ignore",
@@ -203,6 +298,15 @@ class BinanceBroker(Broker):
             symbol=symbol, direction=direction, amount=amount,
             expiration_minutes=expiration_minutes,
         )
+
+        if self._read_only or self.client is None:
+            order.status = OrderStatus.REJECTED
+            order.reason = (
+                "modo somente leitura: configure BINANCE_API_KEY e "
+                "BINANCE_API_SECRET no .env para enviar ordens"
+            )
+            logger.warning("[binance] %s", order.reason)
+            return order
 
         try:
             ticker = self.client.get_symbol_ticker(symbol=symbol)
