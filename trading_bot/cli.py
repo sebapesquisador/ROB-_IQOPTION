@@ -150,6 +150,8 @@ def cmd_backtest(args) -> int:
         settings.symbol = args.symbol.upper()
     if getattr(args, "no_otc", False):
         settings.auto_otc = False
+    if getattr(args, "timeframe", None):
+        settings.timeframe_minutes = args.timeframe
 
     broker = create_broker(settings)
     if not broker.connect():
@@ -157,7 +159,10 @@ def cmd_backtest(args) -> int:
         return 1
 
     symbol = broker.resolve_symbol(settings.symbol)
-    print(f"\nObtendo {args.candles} candles de {symbol}...")
+    tf = settings.timeframe_minutes
+    cobertura = args.candles * tf / 60 / 24
+    print(f"\nObtendo {args.candles} candles de {symbol} "
+          f"em {tf} min (~{cobertura:.1f} dias de pregão)...")
     try:
         df = broker.get_candles(symbol, settings.timeframe_minutes, args.candles)
     except Exception as exc:
@@ -203,7 +208,7 @@ def cmd_backtest(args) -> int:
     names = [args.strategy] if args.strategy else [s["name"] for s in available_strategies()]
 
     if getattr(args, "holdout", False):
-        return _run_holdout(bt, df, names, symbol, args)
+        return _run_holdout(bt, df, names, symbol, args, settings.timeframe_minutes)
 
     results = bt.compare(df, names, symbol)
 
@@ -235,7 +240,7 @@ def cmd_backtest(args) -> int:
     return 0
 
 
-def _run_holdout(bt, df, names, symbol, args) -> int:
+def _run_holdout(bt, df, names, symbol, args, settings_tf: int | None = None) -> int:
     """
     Escolhe a campeã numa fatia dos dados e a testa noutra que ela nunca viu.
 
@@ -390,9 +395,12 @@ def _run_holdout(bt, df, names, symbol, args) -> int:
                 print(f"  Para 30 operações no teste seriam ~{need_total} candles "
                       f"(agora: {len(df)}).")
                 if need_total > 5000:
-                    print("  Acima do que a corretora entrega em 5 min — aumente o "
-                          "timeframe:")
-                    print("  TIMEFRAME_MINUTES=15 e EXPIRATION_MINUTES=15 no .env.")
+                    tf_atual = settings_tf or 5
+                    tf_novo = tf_atual * 3
+                    print(f"  Acima do que a corretora entrega em {tf_atual} min. "
+                          "Use um timeframe maior:")
+                    print(f"  python -m trading_bot.cli backtest --candles "
+                          f"{args.candles} --holdout --timeframe {tf_novo}")
     elif out["edge_pp"] <= 0:
         print("  REPROVADA FORA DA AMOSTRA: a vantagem sumiu em dados novos.")
         print("  Era ruído do período de seleção — é assim que backtest bonito")
@@ -457,7 +465,8 @@ def cmd_strategies(args) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Constrói o parser. Separado de main() para poder ser testado."""
     parser = argparse.ArgumentParser(
         prog="trading-bot", description="Robô de trading — IQ Option e Binance"
     )
@@ -486,6 +495,9 @@ def main(argv=None) -> int:
     p_bt.add_argument("--balance", type=float, default=1000.0)
     p_bt.add_argument("--min-confidence", type=float, default=0.55)
     p_bt.add_argument("--expiration-candles", type=int, default=1)
+    p_bt.add_argument("--timeframe", type=int, metavar="MIN",
+                      help="minutos por candle (padrão: TIMEFRAME_MINUTES do .env). "
+                           "Timeframe maior cobre mais tempo com os mesmos candles")
     p_bt.add_argument("--holdout", action="store_true",
                       help="escolhe a campeã numa fatia dos dados e a testa em "
                            "outra, inédita — separa vantagem real de sorte")
@@ -500,6 +512,11 @@ def main(argv=None) -> int:
     sub.add_parser("validate", help="valida a configuração").set_defaults(func=cmd_validate)
     sub.add_parser("strategies", help="lista as estratégias").set_defaults(func=cmd_strategies)
 
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     try:

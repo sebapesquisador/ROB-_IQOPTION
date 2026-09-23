@@ -42,6 +42,7 @@ class Args:
     holdout_split = 0.7
     payout = 0.85
     balance = 1000.0
+    candles = 1000
 
 
 def make_df(n):
@@ -332,7 +333,7 @@ class TestInconclusivoOrienta:
     def test_sugere_timeframe_quando_inviavel(self, capsys):
         """6924 candles de 5min excedem o histórico da corretora."""
         _, out, _ = self._cenario(capsys, 13)
-        assert "TIMEFRAME_MINUTES=15" in out
+        assert "--timeframe" in out
 
     def test_nao_sugere_timeframe_quando_viavel(self, capsys):
         """Com 28 trades faltam poucos candles; basta pedir mais."""
@@ -346,3 +347,39 @@ class TestInconclusivoOrienta:
         _, out, _ = run(capsys, treino, teste, n=3000)
         assert "INCONCLUSIVO" not in out
         assert "o acaso sozinho cobre" not in out
+
+
+class TestFlagTimeframe:
+    """
+    O backtest lia o timeframe apenas do .env. Orientar "edite TIMEFRAME_MINUTES
+    no .env" falhou na prática: o usuário rodou três vezes seguidas achando que
+    tinha mudado, e o relatório não mostrava o timeframe em uso — só a cobertura
+    em dias, que exigia conta de cabeça para perceber o engano.
+    """
+
+    def test_flag_registrada(self):
+        from trading_bot.cli import build_parser
+        out = build_parser().parse_args(
+            ["backtest", "--candles", "3000", "--timeframe", "15"])
+        assert out.timeframe == 15
+
+    def test_ausente_por_padrao(self):
+        from trading_bot.cli import build_parser
+        out = build_parser().parse_args(["backtest", "--candles", "3000"])
+        assert out.timeframe is None
+
+    def test_sugestao_usa_o_timeframe_atual(self, capsys):
+        """A sugestão deve propor 3x o timeframe corrente, com comando pronto."""
+        treino = [make_res("a", 31, 64.5, +10.5, +60.48, 0.162)]
+        teste = [make_res("a", 13, 53.9, -0.2, -1.06, 0.617)]
+        df = make_df(3000)
+        bt = FakeBacktester({"n_treino": 2100, "treino": treino, "teste": teste})
+
+        class A(Args):
+            candles = 3000
+
+        from trading_bot.cli import _run_holdout
+        _run_holdout(bt, df, ["a"], "EURUSD", A(), 5)
+        out = capsys.readouterr().out
+        assert "--timeframe 15" in out
+        assert "Acima do que a corretora entrega em 5 min" in out

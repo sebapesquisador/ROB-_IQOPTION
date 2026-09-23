@@ -68,21 +68,20 @@ Parar agora custa zero e você sai sabendo o porquê.
 
 Se quiser explorar mais, o próximo teste legítimo é ampliar a amostra.
 
-**1.** Abra o arquivo `.env` no VSCode e altere estas duas linhas:
-
-```env
-TIMEFRAME_MINUTES=15
-EXPIRATION_MINUTES=15
-```
-
-**2.** Salve e rode:
+**1.** Rode este comando (não precisa editar arquivo nenhum):
 
 ```powershell
-python -m trading_bot.cli backtest --candles 3000 --holdout
+python -m trading_bot.cli backtest --candles 3000 --holdout --timeframe 15
 ```
 
-Com 15 minutos por candle, 3000 candles cobrem cerca de 4 meses — amostra
-suficiente para um veredito confiável.
+**2.** Confirme na primeira linha que o timeframe pegou:
+
+```
+Obtendo 3000 candles de EURUSD em 15 min (~31.2 dias de pregão)...
+```
+
+Se aparecer `em 5 min (~10.4 dias)`, a flag não foi aplicada — confira se
+você digitou `--timeframe 15` no fim do comando.
 
 **3.** Leia o veredito final:
 
@@ -143,6 +142,9 @@ python -m trading_bot.cli validate
 
 # Backtest honesto (o que importa)
 python -m trading_bot.cli backtest --candles 3000 --holdout
+
+# Mesma coisa, com amostra maior (candles de 15 min)
+python -m trading_bot.cli backtest --candles 3000 --holdout --timeframe 15
 
 # Painel de controle no navegador
 python -m trading_bot.cli dashboard
