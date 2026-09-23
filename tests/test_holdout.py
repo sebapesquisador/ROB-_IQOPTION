@@ -60,8 +60,8 @@ class TestSelecao:
         teste = [make_res("campea", 50, 58.0, +4.0, +60.0, p=0.04)]
         _, out, bt = run(capsys, treino, teste)
         assert "campeã na seleção: campea" in out
-        # a fatia de teste roda apenas a campeã, não as 3
-        assert bt.chamadas[1][1] == ("campea",)
+        # o veredito acompanha a campeã da seleção, mesmo com todas avaliadas
+        assert "← campeã da seleção" in out
 
     def test_nao_vaza_dados_entre_fatias(self, capsys):
         """Seleção e teste usam candles disjuntos."""
@@ -144,3 +144,51 @@ class TestCasosLimite:
         code, out, _ = run(capsys, treino, [])
         assert code == 1
         assert "não gerou operações" in out
+
+
+class TestTodasNoTeste:
+    """
+    O holdout avalia todas as estratégias fora da amostra, não só a campeã.
+
+    Ver as demais revela quando a liderança apenas troca de nome entre
+    períodos — sintoma clássico de ranking movido a ruído. Num teste real,
+    bollinger_reversion liderou a seleção e rsi_reversal (a PIOR, -19,8pp)
+    liderou o holdout.
+    """
+
+    def test_avalia_todas_fora_da_amostra(self, capsys):
+        treino = [make_res("campea", 200, 60.0, +6.0, +300.0),
+                  make_res("outra", 200, 50.0, -4.0, -100.0)]
+        teste = [make_res("campea", 80, 52.0, -2.0, -30.0),
+                 make_res("outra", 80, 56.0, +2.0, +40.0)]
+        _, out, bt = run(capsys, treino, teste)
+        # a segunda chamada pede as duas, não apenas a campeã
+        assert set(bt.chamadas[1][1]) == {"campea", "outra"}
+        assert "outra" in out.split("2) TESTE")[1]
+
+    def test_avisa_quando_lideranca_troca(self, capsys):
+        treino = [make_res("campea", 200, 60.0, +6.0, +300.0),
+                  make_res("outra", 200, 50.0, -4.0, -100.0)]
+        teste = [make_res("campea", 80, 52.0, -2.0, -30.0),
+                 make_res("outra", 80, 56.0, +2.0, +40.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "A melhor no teste foi outra" in out
+        assert "sinal de ruído" in out
+
+    def test_nao_avisa_quando_lideranca_se_mantem(self, capsys):
+        treino = [make_res("campea", 200, 60.0, +6.0, +300.0),
+                  make_res("outra", 200, 50.0, -4.0, -100.0)]
+        teste = [make_res("campea", 80, 58.0, +4.0, +90.0, p=0.02),
+                 make_res("outra", 80, 49.0, -5.0, -40.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "A melhor no teste foi" not in out
+
+    def test_veredito_segue_a_campea_nao_a_nova_lider(self, capsys):
+        """A nova líder não é promovida: seria escolher olhando o resultado."""
+        treino = [make_res("campea", 200, 60.0, +6.0, +300.0),
+                  make_res("outra", 200, 50.0, -4.0, -100.0)]
+        teste = [make_res("campea", 80, 50.0, -4.0, -62.0),
+                 make_res("outra", 80, 57.0, +3.0, +50.0, p=0.01)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "REPROVADA FORA DA AMOSTRA" in out
+        assert "SOBREVIVEU" not in out

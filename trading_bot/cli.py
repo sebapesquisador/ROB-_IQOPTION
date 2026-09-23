@@ -90,13 +90,48 @@ def cmd_run(args) -> int:
     return 0
 
 
+def _port_livre(host: str, port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1" if host == "0.0.0.0" else host, port))
+            return True
+        except OSError:
+            return False
+
+
 def cmd_dashboard(args) -> int:
     import uvicorn
     settings = get_settings()
     _banner(settings)
     host = args.host or settings.api_host
     port = args.port or settings.api_port
-    print(f"\n  Painel disponível em http://{host}:{port}\n")
+
+    # Porta ocupada é comum: outra plataforma, um painel esquecido aberto, etc.
+    # O erro cru do uvicorn ("error while attempting to bind") não diz o que
+    # fazer, então procuramos a próxima porta livre em vez de abortar.
+    if not _port_livre(host, port):
+        alternativa = next(
+            (p for p in range(port + 1, port + 51) if _port_livre(host, p)), None
+        )
+        if alternativa is None:
+            print(f"\n✖ A porta {port} está ocupada e não há porta livre "
+                  f"entre {port + 1} e {port + 50}.")
+            print("  Escolha uma manualmente: "
+                  "python -m trading_bot.cli dashboard --port 9000\n")
+            return 1
+        if getattr(args, "port", None):
+            # Porta pedida explicitamente: não trocamos por baixo dos panos.
+            print(f"\n✖ A porta {port} já está em uso por outro programa.")
+            print(f"  Sugestão: --port {alternativa} (está livre)\n")
+            return 1
+        print(f"\n  ⚠ Porta {port} ocupada por outro programa — usando {alternativa}.")
+        print(f"    Para fixar, defina API_PORT={alternativa} no .env")
+        port = alternativa
+
+    url_host = "localhost" if host == "0.0.0.0" else host
+    print(f"\n  Painel disponível em http://{url_host}:{port}\n")
     uvicorn.run(
         "trading_bot.api.server:app",
         host=host, port=port, reload=args.reload,
@@ -245,18 +280,33 @@ def _run_holdout(bt, df, names, symbol, args) -> int:
     print(f"\n  → campeã na seleção: {nome} "
           f"({campea['win_rate']:.1f}% de acerto, {campea['net_profit']:+.2f})")
 
-    fora = [r for r in bt.compare(teste, [nome], symbol) if "error" not in r]
-    if not fora:
+    # Avaliamos TODAS fora da amostra, não só a campeã: ver as demais mostra
+    # se a liderança se manteve ou se apenas trocou de nome — que é o sintoma
+    # clássico de ranking movido a ruído.
+    todos_fora = {r["strategy"]: r
+                  for r in bt.compare(teste, [r["strategy"] for r in dentro], symbol)
+                  if "error" not in r}
+    out = todos_fora.get(nome)
+    if out is None:
         print(f"\n✖ {nome} não gerou operações no período de teste — "
               "amostra curta demais para validar.\n")
         return 1
-    out = fora[0]
 
-    print(f"\n  2) TESTE — a mesma estratégia em dados inéditos\n")
+    print(f"\n  2) TESTE — desempenho em dados inéditos\n")
     print(f"  {'estratégia':<22}{'trades':>7}{'acerto':>9}{'vantagem':>10}{'lucro':>11}{'p-valor':>9}")
     print("-" * 105)
-    print(f"  {out['strategy']:<22}{out['total_trades']:>7}{out['win_rate']:>8.1f}%"
-          f"{out['edge_pp']:>+9.1f}p{out['net_profit']:>+11.2f}{out.get('p_value', 1.0):>9.3f}")
+    for r in sorted(todos_fora.values(), key=lambda x: -x["net_profit"]):
+        marca = "  ← campeã da seleção" if r["strategy"] == nome else ""
+        print(f"  {r['strategy']:<22}{r['total_trades']:>7}{r['win_rate']:>8.1f}%"
+              f"{r['edge_pp']:>+9.1f}p{r['net_profit']:>+11.2f}"
+              f"{r.get('p_value', 1.0):>9.3f}{marca}")
+
+    melhor_fora = max(todos_fora.values(), key=lambda r: r["net_profit"])
+    if melhor_fora["strategy"] != nome:
+        print(f"\n  ⚠ A melhor no teste foi {melhor_fora['strategy']}, não a campeã.")
+        print("    Liderança que troca de dona entre períodos é sinal de ruído,")
+        print("    não de vantagem — não adote a nova líder: ela foi escolhida")
+        print("    olhando o resultado, o mesmo erro de novo.")
 
     variacao = out["win_rate"] - campea["win_rate"]
     print("\n" + "=" * 105)

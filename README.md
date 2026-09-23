@@ -116,6 +116,9 @@ python -m trading_bot.cli backtest --candles 3000 --payout 0.85
 
 Para isolar uma: `--strategy rsi_reversal`.
 
+> Não é preciso rodar uma por vez: **sem `--strategy`, todas são testadas**
+> no mesmo período e comparadas lado a lado.
+
 ⚠️ **Não escolha simplesmente a primeira da tabela.** Comparar 5 estratégias
 e ficar com a melhor infla o resultado mesmo quando nenhuma tem vantagem:
 numa simulação com 5 estratégias de acerto idêntico ao ponto de equilíbrio,
@@ -135,6 +138,11 @@ python -m trading_bot.cli backtest --candles 3000 --holdout
 | `INCONCLUSIVO` | Menos de 30 operações no teste; amplie a amostra |
 | `NÃO COMPROVADA` | Manteve vantagem, mas ainda pode ser sorte |
 | `SOBREVIVEU` | Vantagem preservada — o resultado mais forte possível |
+
+O holdout avalia **todas** as estratégias na fatia de teste, não só a campeã.
+Se a liderança troca de dona entre os dois períodos, o ranking está sendo
+movido por ruído — num teste real `bollinger_reversion` liderou a seleção e
+`rsi_reversal`, a pior de todas (-19,8pp), liderou o holdout.
 
 Regra prática: **quanto mais backtests você roda, maior a chance de achar
 sorte e confundi-la com vantagem** (10 rodadas ⇒ 40% de chance de um falso
