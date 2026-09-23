@@ -201,51 +201,74 @@ class TestTodasNoTeste:
         assert "SOBREVIVEU" not in out
 
 
-class TestCampeaComAmostraMagra:
+class TestCampeaSemSignificancia:
     """
-    Campeã eleita com poucas operações tende a ser a mais sortuda.
+    Campeã sem significância estatística tende a ser a mais sortuda.
 
-    Caso real: rsi_reversal liderou a seleção com 31 trades e 64,5% de
-    acerto, e caiu para 53,9% em 13 trades no holdout — exatamente em cima
-    do ponto de equilíbrio. Poucas operações produzem os desvios mais
-    extremos, então quem menos opera é quem mais lidera por acaso.
+    Caso real: rsi_reversal liderou a seleção com 31 operações, p=0,162 e
+    64,5% de acerto, e caiu para 53,9% em 13 operações no holdout — em cima
+    do ponto de equilíbrio. Um limiar fixo de "30 trades" a deixava passar
+    raspando; o p-valor não deixa.
     """
 
-    def test_avisa_quando_campea_tem_menos_de_30_trades(self, capsys):
-        treino = [make_res("magra", 20, 65.0, +11.0, +80.0),
-                  make_res("densa", 200, 55.0, +1.0, +40.0)]
-        teste = [make_res("magra", 40, 52.0, -2.0, -10.0),
-                 make_res("densa", 200, 54.0, 0.0, -5.0)]
-        _, out, _ = run(capsys, treino, teste)
-        assert "eleita com apenas 20 operações" in out
-        assert "densa" in out.split("campeã na seleção")[0]
+    CASO_REAL = [
+        ("rsi_reversal", 31, 64.5, +10.5, +60.48, 0.162),
+        ("macd_momentum", 109, 52.8, -1.3, -29.67, 0.680),
+        ("bollinger_reversion", 117, 49.1, -4.9, -104.66, 0.894),
+        ("trend_pullback", 227, 49.3, -4.7, -186.34, 0.948),
+        ("confluence", 815, 49.4, -4.7, -516.73, 0.999),
+    ]
 
-    def test_sugere_alternativa_com_amostra_suficiente(self, capsys):
-        treino = [make_res("magra", 20, 65.0, +11.0, +80.0),
-                  make_res("densa", 200, 55.0, +1.0, +40.0)]
-        teste = [make_res("magra", 40, 52.0, -2.0, -10.0),
-                 make_res("densa", 200, 54.0, 0.0, -5.0)]
+    def test_caso_real_dispara_o_aviso(self, capsys):
+        """31 operações passavam pelo limiar de 30; p=0,162 não passa."""
+        treino = [make_res(*c) for c in self.CASO_REAL]
+        teste = [make_res(n, 40, 50.0, -4.0, -20.0) for n, *_ in self.CASO_REAL]
         _, out, _ = run(capsys, treino, teste)
-        assert "a melhor seria densa" in out
+        assert "não tem significância estatística" in out
+        assert "p=0.162" in out
 
-    def test_nao_avisa_com_campea_robusta(self, capsys):
-        treino = [make_res("densa", 200, 60.0, +6.0, +300.0),
-                  make_res("outra", 150, 50.0, -4.0, -50.0)]
-        teste = [make_res("densa", 100, 58.0, +4.0, +80.0, p=0.02),
-                 make_res("outra", 90, 49.0, -5.0, -40.0)]
+    def test_aponta_desproporcao_de_amostra(self, capsys):
+        """A campeã opera 3,8x menos que a mediana do grupo (31 vs 117)."""
+        treino = [make_res(*c) for c in self.CASO_REAL]
+        teste = [make_res(n, 40, 50.0, -4.0, -20.0) for n, *_ in self.CASO_REAL]
         _, out, _ = run(capsys, treino, teste)
-        assert "eleita com apenas" not in out
+        assert "3.8x menos que a mediana" in out
+        assert "31 vs 117" in out
 
-    def test_sem_alternativa_densa_nao_quebra(self, capsys):
-        """Todas as estratégias com amostra magra: avisa sem sugerir."""
-        treino = [make_res("a", 10, 70.0, +16.0, +50.0),
-                  make_res("b", 12, 60.0, +6.0, +20.0)]
-        teste = [make_res("a", 40, 52.0, -2.0, -10.0),
-                 make_res("b", 40, 51.0, -3.0, -12.0)]
-        code, out, _ = run(capsys, treino, teste)
-        assert "eleita com apenas" in out
-        assert "a melhor seria" not in out
-        assert code == 0
+    def test_amostra_grande_sem_significancia_nao_culpa_o_tamanho(self, capsys):
+        """209 operações não é 'amostra pequena' — a mensagem deve mudar."""
+        treino = [make_res("a", 209, 54.1, +0.05, -8.34, 0.527),
+                  make_res("b", 112, 50.9, -3.2, -67.89, 0.778)]
+        teste = [make_res("a", 82, 50.0, -4.0, -62.96),
+                 make_res("b", 59, 47.5, -6.6, -71.87)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "dentro do que o acaso produz" in out
+        assert "amostras pequenas" not in out
+
+    def test_sugere_alternativa_com_significancia(self, capsys):
+        # a sortuda lucra mais (vira campeã) mas sem significância;
+        # a solida lucra menos e tem p baixo -> deve ser a sugerida
+        treino = [make_res("sortuda", 20, 70.0, +16.0, +190.0, 0.30),
+                  make_res("solida", 400, 58.0, +4.0, +150.0, 0.004)]
+        teste = [make_res("sortuda", 40, 52.0, -2.0, -10.0),
+                 make_res("solida", 200, 57.0, +3.0, +60.0, 0.008)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "a melhor seria solida" in out
+
+    def test_avisa_quando_nenhuma_tem_significancia(self, capsys):
+        treino = [make_res(*c) for c in self.CASO_REAL]
+        teste = [make_res(n, 40, 50.0, -4.0, -20.0) for n, *_ in self.CASO_REAL]
+        _, out, _ = run(capsys, treino, teste)
+        assert "Nenhuma das estratégias atingiu significância" in out
+        assert "não uma aposta validada" in out
+
+    def test_campea_significativa_nao_dispara_aviso(self, capsys):
+        treino = [make_res("boa", 500, 60.0, +6.0, +400.0, 0.001),
+                  make_res("outra", 300, 50.0, -4.0, -100.0, 0.900)]
+        teste = [make_res("boa", 200, 59.0, +5.0, +180.0, 0.002),
+                 make_res("outra", 150, 49.0, -5.0, -60.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "não tem significância" not in out
 
 
 class TestAgregado:

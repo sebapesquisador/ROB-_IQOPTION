@@ -278,18 +278,39 @@ def _run_holdout(bt, df, names, symbol, args) -> int:
     campea = max(dentro, key=lambda r: r["net_profit"])
     nome = campea["strategy"]
 
-    # Campeã eleita com amostra magra tende a ser a mais sortuda, não a
+    # Campeã sem significância estatística tende a ser a mais sortuda, não a
     # melhor: poucas operações produzem os desvios mais extremos, então a
     # estratégia que menos opera é a que mais aparece no topo por acaso.
-    if campea["total_trades"] < 30:
-        densas = [r for r in dentro if r["total_trades"] >= 30]
-        alternativa = max(densas, key=lambda r: r["net_profit"]) if densas else None
-        print(f"\n  ⚠ A campeã foi eleita com apenas {campea['total_trades']} operações.")
-        print("    Amostras pequenas geram os desvios mais extremos, então a")
-        print("    estratégia que menos opera é a que mais lidera por sorte.")
+    #
+    # O critério aqui é o p-valor, não uma contagem fixa de operações: um
+    # limiar de "30 trades" deixa passar raspando uma campeã com 31 que já
+    # era estatisticamente indistinguível de ruído (p=0,161).
+    from .backtest.engine import BacktestResult
+
+    alpha = BacktestResult.ALPHA / BacktestResult.N_COMPARISONS
+    if campea.get("p_value", 1.0) > alpha:
+        solidas = [r for r in dentro if r.get("p_value", 1.0) <= alpha]
+        alternativa = max(solidas, key=lambda r: r["net_profit"]) if solidas else None
+        print(f"\n  ⚠ A liderança de {nome} não tem significância estatística "
+              f"(p={campea.get('p_value', 1.0):.3f}, exigido <{alpha:.3f}).")
+        # A campeã operar bem menos que as rivais é o sinal mais claro de que
+        # o topo foi conquistado por variância, não por acerto.
+        mediana = sorted(r["total_trades"] for r in dentro)[len(dentro) // 2]
+        if mediana and campea["total_trades"] * 2 <= mediana:
+            print(f"    Ela opera {mediana / campea['total_trades']:.1f}x menos que a "
+                  f"mediana do grupo ({campea['total_trades']} vs {mediana}):")
+            print("    amostras pequenas geram os desvios mais extremos, então a")
+            print("    estratégia que menos opera é a que mais lidera por sorte.")
+        else:
+            print(f"    Mesmo com {campea['total_trades']} operações, a diferença para o "
+                  "ponto de")
+            print("    equilíbrio está dentro do que o acaso produz.")
         if alternativa is not None:
-            print(f"    Com ao menos 30 operações, a melhor seria "
-                  f"{alternativa['strategy']} ({alternativa['net_profit']:+.2f}).")
+            print(f"    Com significância, a melhor seria {alternativa['strategy']} "
+                  f"({alternativa['net_profit']:+.2f}).")
+        else:
+            print("    Nenhuma das estratégias atingiu significância na seleção —")
+            print("    a campeã abaixo é a melhor do grupo, não uma aposta validada.")
 
     print(f"\n  → campeã na seleção: {nome} "
           f"({campea['win_rate']:.1f}% de acerto, {campea['net_profit']:+.2f})")
