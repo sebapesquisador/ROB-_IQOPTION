@@ -227,6 +227,17 @@ class IQOptionBroker(Broker):
             return base
 
         if self.settings.auto_otc and (self._is_open(otc, "binary") or self._is_open(otc, "turbo")):
+            # A flag da corretora já foi vista marcando o par real como fechado
+            # durante o pregão. Trocar para OTC nesse caso é pior que seguir:
+            # OTC é outro instrumento, com série de preço própria, e o backtest
+            # passa a medir algo que não se transfere para o par real.
+            if self._forex_open_now():
+                logger.warning(
+                    "[iq] corretora marca %s como fechado, mas o pregão FOREX está "
+                    "aberto — usando %s mesmo assim (não troco por %s: é outro ativo)",
+                    base, base, otc,
+                )
+                return base
             logger.info("[iq] %s fechado, usando %s", base, otc)
             return otc
 

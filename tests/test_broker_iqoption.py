@@ -7,6 +7,8 @@ quando a corretora demora a responder. O robô não pode cair junto.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from trading_bot.brokers.base import BrokerError
@@ -108,10 +110,16 @@ class TestResolucaoDeSimbolo:
         assert broker.resolve_symbol("EURUSD") == "EURUSD"
 
     def test_cai_para_otc_quando_normal_fechado(self, broker):
+        """Fora do pregão (sábado), o par real fechado justifica trocar por OTC."""
+        from unittest.mock import patch
+
         broker.api = FakeAPI(open_time={"binary": {
             "EURUSD": {"open": False}, "EURUSD-OTC": {"open": True},
         }})
-        assert broker.resolve_symbol("EURUSD") == "EURUSD-OTC"
+        sabado = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+        with patch("trading_bot.brokers.iqoption.datetime") as m:
+            m.now.return_value = sabado
+            assert broker.resolve_symbol("EURUSD") == "EURUSD-OTC"
 
     def test_is_tradable_permissivo_sem_lista(self, broker):
         """Sem informação, deixa a corretora decidir — não bloqueia por suposição."""
@@ -251,3 +259,57 @@ class TestPaginacao:
         df = b.get_candles("EURUSD", 5, 9000)
         assert 0 < len(df) <= 1501        # devolve o que existe
         assert len(b.api.calls) < 20      # não entra em laço infinito
+
+
+class TestNaoTrocaPorOtcComPregaoAberto:
+    """
+    Regressão: às 16:49 de uma quarta-feira (19:49 UTC, pregão aberto) a
+    corretora marcou EURUSD como fechado e o robô trocou por EURUSD-OTC.
+    O backtest inteiro passou a medir um ativo sintético — outra série de
+    preço, que não se transfere para o par real.
+
+    A flag de disponibilidade da IQ Option é sabidamente não confiável; o
+    calendário do FOREX é determinístico. Com o pregão aberto, o par real
+    tem prioridade.
+    """
+
+    class ApiParFechado:
+        """EURUSD marcado fechado, EURUSD-OTC aberto."""
+
+        def get_all_init_v2(self):
+            return {"binary": {"actives": {
+                "1": {"name": "front.EURUSD", "enabled": False, "is_suspended": True},
+                "2": {"name": "front.EURUSD-OTC", "enabled": True, "is_suspended": False},
+            }}}
+
+        def get_all_open_time(self):
+            return {}
+
+    def _resolve(self, quando):
+        from unittest.mock import patch
+        b = IQOptionBroker(make_settings(auto_otc=True))
+        b.api = self.ApiParFechado()
+        b._connected = True
+        with patch("trading_bot.brokers.iqoption.datetime") as m:
+            m.now.return_value = quando
+            return b.resolve_symbol("EURUSD")
+
+    def test_caso_real_quarta_com_pregao_aberto(self):
+        quando = datetime(2026, 9, 23, 19, 49, tzinfo=timezone.utc)
+        assert self._resolve(quando) == "EURUSD"
+
+    def test_sabado_usa_otc(self):
+        quando = datetime(2026, 9, 26, 12, 0, tzinfo=timezone.utc)
+        assert self._resolve(quando) == "EURUSD-OTC"
+
+    def test_domingo_antes_da_abertura_usa_otc(self):
+        quando = datetime(2026, 9, 27, 18, 0, tzinfo=timezone.utc)
+        assert self._resolve(quando) == "EURUSD-OTC"
+
+    def test_domingo_apos_abertura_usa_par_real(self):
+        quando = datetime(2026, 9, 27, 22, 0, tzinfo=timezone.utc)
+        assert self._resolve(quando) == "EURUSD"
+
+    def test_sexta_apos_fechamento_usa_otc(self):
+        quando = datetime(2026, 9, 25, 22, 0, tzinfo=timezone.utc)
+        assert self._resolve(quando) == "EURUSD-OTC"
