@@ -1,0 +1,29 @@
+# Normalização de fim de linha.
+#
+# Sem isto, um checkout no Windows pode gravar CRLF em arquivos que o
+# repositório guarda em LF. O git passa a ver o arquivo inteiro como
+# modificado e aborta o `git pull` com "Your local changes would be
+# overwritten by merge" — mesmo que nada tenha sido editado de fato.
+#
+# `text=auto` deixa o git decidir: LF no repositório, fim de linha nativo
+# na cópia de trabalho.
+* text=auto
+
+# Scripts que precisam de LF mesmo no Windows (quebram com CRLF)
+*.sh text eol=lf
+
+# Scripts do Windows precisam de CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binários: nunca converter
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.zip binary
+*.gz binary
