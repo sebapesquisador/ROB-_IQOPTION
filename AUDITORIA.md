@@ -452,6 +452,50 @@ timidez do sistema: é a única leitura defensável. E por isso um backtest
 que exibe "61,5% de acerto" sem informar o tamanho da amostra é pior que
 inútil — é enganoso.
 
+### 5.5 Teste conclusivo: a resposta final
+
+Com `--holdout-split 0.31` a fatia de teste passou a ter 2070 candles e
+1333 operações — amostra suficiente para um veredito que não é
+"inconclusivo". Resultado:
+
+| | seleção (930 candles) | teste (2070 candles) |
+|---|---|---|
+| `macd_momentum` (campeã) | 39 trades, **64,1%**, +73,47 | 116 trades, **48,2%**, -119,64 |
+
+Colapso de **-15,8pp** com a amostra do teste três vezes maior que a da
+seleção. Veredito: **REPROVADA FORA DA AMOSTRA**.
+
+**O agregado, agora com 1333 operações:** -10,33% por operação, contra
+-7,50% teóricos da casa. É a maior amostra de todas as execuções e a mais
+distante do zero — nenhum sinal de vantagem escondida.
+
+**Consolidado das 8 execuções** (resultado médio por operação no holdout):
+
+| execução | operações | por operação |
+|---|---|---|
+| 1 | 544 | -6,53% |
+| 2 | 572 | -7,24% |
+| 3 | 570 | -7,56% |
+| 4 | 571 | -7,79% |
+| 5 | 569 | -8,10% |
+| 6 | **1333** | **-10,33%** |
+| **média** | | **-7,92%** |
+| *vantagem da casa (teórico)* | | *-7,50%* |
+
+**Sobre a `rsi_reversal`,** que liderou várias fatias de teste: somando as
+quatro avaliações fora da amostra, 47 vitórias em 74 operações (63,5%,
+p=0,064). Não atinge significância nem agregada — e agregar fatias
+escolhidas depois de ver o resultado é o mesmo erro metodológico que o
+holdout existe para evitar. Ela também nunca foi campeã da seleção e do
+teste simultaneamente: liderava ora uma, ora outra, que é a assinatura de
+variância e não de vantagem.
+
+**Conclusão do projeto:** nenhuma das 5 estratégias demonstrou vantagem
+sobre o payout de 85% no EURUSD. O resultado é estável, reprodutível e
+convergente com a teoria. Não é limitação do robô nem falta de dados — é a
+constatação de que análise técnica sobre candles não supera a vantagem
+estrutural de 7,5% da corretora.
+
 ## 6. Recomendações
 
 ### Antes de usar dinheiro real
