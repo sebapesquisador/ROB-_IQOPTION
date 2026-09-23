@@ -413,6 +413,45 @@ forma consistente em binárias opera com vantagem estrutural (informação,
 latência, arbitragem de preço), não com indicadores sobre candles — que é
 o que este robô, e qualquer robô de análise técnica, faz.
 
+### 5.4 Duas rodadas com 5 minutos de diferença
+
+O mesmo comando, no mesmo ativo, executado às 16:13 e às 16:18 — a segunda
+com meia hora a mais de candles:
+
+| rodada | trades | acerto | lucro | veredito |
+|---|---|---|---|---|
+| 16:13 | 13 | 53,9% | **-1,06** | INCONCLUSIVO |
+| 16:18 | 13 | 61,5% | **+17,62** | INCONCLUSIVO |
+
+A diferença entre "perde dinheiro" e "lucra 17 dólares" foi **uma única
+operação**: 7 vitórias em 13 viraram 8 em 13. Um trade representa 7,7% de
+uma amostra desse tamanho, e desloca o acerto em 7,7 pontos percentuais.
+
+Enquanto isso, o agregado das 5 estratégias — 570 operações — mal se moveu:
+
+| rodada | operações | resultado por operação |
+|---|---|---|
+| 16:13 | 569 | -8,10% |
+| 16:18 | 570 | -7,56% |
+| *teórico (vantagem da casa)* | — | *-7,50%* |
+
+É a lei dos grandes números visível em duas linhas. O desvio padrão do
+acerto cai com a raiz do tamanho da amostra:
+
+| operações | desvio padrão | faixa típica do acaso |
+|---|---|---|
+| 13 | 13,82pp | 26,4% a 81,7% |
+| 50 | 7,05pp | 40,0% a 68,1% |
+| 200 | 3,52pp | 47,0% a 61,1% |
+| 570 | 2,09pp | 49,9% a 58,2% |
+| 2000 | 1,11pp | 51,8% a 56,3% |
+
+Com 13 operações, qualquer acerto entre 26% e 82% é compatível com uma
+estratégia sem vantagem alguma. Por isso o veredito INCONCLUSIVO não é
+timidez do sistema: é a única leitura defensável. E por isso um backtest
+que exibe "61,5% de acerto" sem informar o tamanho da amostra é pior que
+inútil — é enganoso.
+
 ## 6. Recomendações
 
 ### Antes de usar dinheiro real

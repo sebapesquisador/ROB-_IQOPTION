@@ -370,8 +370,29 @@ def _run_holdout(bt, df, names, symbol, args) -> int:
     print("=" * 105)
 
     if out["total_trades"] < 30:
+        import math as _math
+
         print(f"  INCONCLUSIVO: apenas {out['total_trades']} operações no teste.")
-        print("  Rode com mais candles ou timeframe maior.")
+        # Com amostra assim, o desvio padrão do acerto é enorme: informar a
+        # faixa que o puro acaso cobre evita que o número seja lido como sinal.
+        n = out["total_trades"]
+        if n:
+            be = 1.0 / (1.0 + args.payout)
+            sd = _math.sqrt(be * (1 - be) / n) * 100
+            print(f"  Com {n} operações, o acaso sozinho cobre de "
+                  f"{max(0.0, be * 100 - 2 * sd):.0f}% a {min(100.0, be * 100 + 2 * sd):.0f}% "
+                  f"de acerto — o resultado acima não distingue sorte de vantagem.")
+            # Quantos candles seriam necessários para 30 operações no teste.
+            candles_teste = len(teste)
+            por_candle = n / candles_teste if candles_teste else 0
+            if por_candle > 0:
+                need_total = int(_math.ceil((30 / por_candle) / (1 - args.holdout_split)))
+                print(f"  Para 30 operações no teste seriam ~{need_total} candles "
+                      f"(agora: {len(df)}).")
+                if need_total > 5000:
+                    print("  Acima do que a corretora entrega em 5 min — aumente o "
+                          "timeframe:")
+                    print("  TIMEFRAME_MINUTES=15 e EXPIRATION_MINUTES=15 no .env.")
     elif out["edge_pp"] <= 0:
         print("  REPROVADA FORA DA AMOSTRA: a vantagem sumiu em dados novos.")
         print("  Era ruído do período de seleção — é assim que backtest bonito")

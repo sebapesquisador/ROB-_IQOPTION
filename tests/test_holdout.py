@@ -302,3 +302,47 @@ class TestAgregado:
                  make_res("b", 100, 51.0, -3.0, -40.0)]
         _, out, _ = run(capsys, treino, teste)
         assert "1 de 2 positivas" in out
+
+
+class TestInconclusivoOrienta:
+    """
+    Duas rodadas do mesmo comando, 30 min de dados de diferença:
+    13 trades a 53,9% (-1,06) viraram 13 trades a 61,5% (+17,62).
+    A diferença foi UMA operação — 7,7% de uma amostra desse tamanho.
+    O veredito precisa dizer o tamanho do acaso, não só "rode com mais".
+    """
+
+    def _cenario(self, capsys, n_teste):
+        treino = [make_res("a", 31, 64.5, +10.5, +60.48, 0.162),
+                  make_res("b", 109, 52.8, -1.3, -29.67, 0.680)]
+        teste = [make_res("a", n_teste, 61.5, +7.5, +17.62, 0.400),
+                 make_res("b", 47, 52.2, -1.9, -17.82, 0.712)]
+        return run(capsys, treino, teste, n=3000)
+
+    def test_informa_faixa_do_acaso(self, capsys):
+        _, out, _ = self._cenario(capsys, 13)
+        assert "o acaso sozinho cobre de" in out
+        assert "26% a 82%" in out
+
+    def test_estima_candles_necessarios(self, capsys):
+        _, out, _ = self._cenario(capsys, 13)
+        assert "Para 30 operações no teste seriam" in out
+        assert "(agora: 3000)" in out
+
+    def test_sugere_timeframe_quando_inviavel(self, capsys):
+        """6924 candles de 5min excedem o histórico da corretora."""
+        _, out, _ = self._cenario(capsys, 13)
+        assert "TIMEFRAME_MINUTES=15" in out
+
+    def test_nao_sugere_timeframe_quando_viavel(self, capsys):
+        """Com 28 trades faltam poucos candles; basta pedir mais."""
+        _, out, _ = self._cenario(capsys, 28)
+        assert "Para 30 operações no teste seriam" in out
+        assert "TIMEFRAME_MINUTES=15" not in out
+
+    def test_amostra_suficiente_nao_mostra_orientacao(self, capsys):
+        treino = [make_res("a", 200, 60.0, +6.0, +300.0, 0.001)]
+        teste = [make_res("a", 120, 58.0, +4.0, +90.0, 0.004)]
+        _, out, _ = run(capsys, treino, teste, n=3000)
+        assert "INCONCLUSIVO" not in out
+        assert "o acaso sozinho cobre" not in out
