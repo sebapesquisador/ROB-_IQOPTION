@@ -473,6 +473,91 @@ def _diagnostico_env() -> None:
     print()
 
 
+def cmd_backtest_spot(args) -> int:
+    """
+    Backtest para mercado spot (Binance).
+
+    Separado de `backtest` porque a mecânica é outra: em spot a saída ocorre
+    quando stop ou alvo é tocado, o prejuízo é a distância até o stop (não a
+    aposta inteira) e o custo é a taxa por ordem. Relatar spot com a
+    matemática de binárias produziria números sem sentido.
+    """
+    from .backtest import SpotBacktester
+    from .brokers import create_broker
+    from .core.strategies import available_strategies
+
+    settings = get_settings()
+    if args.symbol:
+        settings.symbol = args.symbol.upper()
+    if getattr(args, "timeframe", None):
+        settings.timeframe_minutes = args.timeframe
+
+    broker = create_broker(settings)
+    if not broker.connect():
+        logger.error("falha ao conectar na corretora")
+        print("\n✖ Não foi possível conectar.")
+        print("  Para testar sem corretora: BROKER=paper no .env\n")
+        return 1
+
+    symbol = settings.symbol
+    tf = settings.timeframe_minutes
+    print(f"\nObtendo {args.candles} candles de {symbol} em {tf} min...")
+    try:
+        df = broker.get_candles(symbol, tf, args.candles)
+    except Exception as exc:
+        print(f"\n✖ Não foi possível obter candles: {exc}\n")
+        return 1
+    finally:
+        broker.disconnect()
+
+    if len(df) < 100:
+        print(f"\n✖ Apenas {len(df)} candles — insuficiente.\n")
+        return 1
+
+    dias = (df["timestamp"].iloc[-1] - df["timestamp"].iloc[0]).total_seconds() / 86400
+    print(f"Recebidos: {len(df)} candles "
+          f"({df['timestamp'].iloc[0]} → {df['timestamp'].iloc[-1]}, {dias:.1f} dias)\n")
+
+    bt = SpotBacktester(
+        settings.strategy.model_copy(update={"min_confidence": args.min_confidence}),
+        settings.risk,
+        stop_loss_pct=args.stop, take_profit_pct=args.target,
+        fee_pct=args.fee, slippage_pct=args.slippage,
+        initial_balance=args.balance, max_bars=args.max_bars,
+    )
+    names = [args.strategy] if args.strategy else [s["name"] for s in available_strategies()]
+    results = bt.compare(df, names, symbol)
+
+    rr = args.target / args.stop if args.stop else 0
+    be = 100 / (1 + rr) if rr else 0
+    print("=" * 105)
+    print(f"  BACKTEST SPOT — stop {args.stop}% | alvo {args.target}% | "
+          f"taxa {args.fee}% por ordem")
+    print(f"  razão alvo/stop {rr:.2f}x → acerto de equilíbrio {be:.1f}% "
+          f"(sem taxas)")
+    print("=" * 105)
+    print(f"  {'estratégia':<22}{'trades':>7}{'acerto':>9}{'payoff':>8}"
+          f"{'lucro':>11}{'taxas':>9}{'DD%':>7}{'p-valor':>9}")
+    print("-" * 105)
+    for r in results:
+        if "error" in r:
+            print(f"  {r['strategy']:<22}  erro: {r['error']}")
+            continue
+        print(f"  {r['strategy']:<22}{r['total_trades']:>7}{r['win_rate']:>8.1f}%"
+              f"{r['payoff_ratio']:>8.2f}{r['net_profit']:>+11.2f}"
+              f"{r['total_fees']:>9.2f}{r['max_drawdown_pct']:>7.1f}"
+              f"{r.get('p_value', 1.0):>9.3f}")
+    print("=" * 105)
+    for r in results:
+        if "error" not in r:
+            print(f"  {r['strategy']:<22} {r['verdict']}")
+    print("=" * 105)
+    print("\n  payoff = ganho médio ÷ perda média. Em spot o acerto sozinho não")
+    print("  decide: com payoff 2.0, 34% de acerto já é lucrativo.")
+    print("\n  Valide em conta demo por semanas antes de considerar dinheiro real.\n")
+    return 0
+
+
 def cmd_validate(args) -> int:
     try:
         settings = get_settings(reload=True)
@@ -566,6 +651,26 @@ def build_parser() -> argparse.ArgumentParser:
                       help="não cair para o par OTC: avalia só o ativo real "
                            "(falha se o mercado estiver fechado)")
     p_bt.set_defaults(func=cmd_backtest)
+
+    p_spot = sub.add_parser("backtest-spot",
+                            help="testa estratégias em mercado spot (Binance)")
+    p_spot.add_argument("--strategy", help="testa apenas uma estratégia")
+    p_spot.add_argument("--symbol")
+    p_spot.add_argument("--candles", type=int, default=1000)
+    p_spot.add_argument("--timeframe", type=int, metavar="MIN")
+    p_spot.add_argument("--stop", type=float, default=1.0,
+                        help="stop loss em %% do preço de entrada (padrão 1.0)")
+    p_spot.add_argument("--target", type=float, default=1.5,
+                        help="alvo em %% do preço de entrada (padrão 1.5)")
+    p_spot.add_argument("--fee", type=float, default=0.1,
+                        help="taxa por ordem em %% (padrão 0.1 = Binance spot)")
+    p_spot.add_argument("--slippage", type=float, default=0.0,
+                        help="deslizamento em %% aplicado contra a posição")
+    p_spot.add_argument("--max-bars", type=int, default=0,
+                        help="fecha a posição após N candles (0 = sem limite)")
+    p_spot.add_argument("--balance", type=float, default=1000.0)
+    p_spot.add_argument("--min-confidence", type=float, default=0.55)
+    p_spot.set_defaults(func=cmd_backtest_spot)
 
     sub.add_parser("validate", help="valida a configuração").set_defaults(func=cmd_validate)
     sub.add_parser("strategies", help="lista as estratégias").set_defaults(func=cmd_strategies)

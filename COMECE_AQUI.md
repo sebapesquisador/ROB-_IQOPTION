@@ -153,6 +153,72 @@ que o backtest previu. Se divergirem, o backtest estava errado.
 
 ---
 
+## Caminho Binance (spot) — por que a matemática muda
+
+Nas binárias, cada operação já nasce com **7,5% contra você** (payout 85%).
+No spot da Binance você compra e vende a preço real, pagando ~0,1% de taxa
+por ordem — **0,2% ida e volta**. É cerca de **38 vezes menos custo**.
+
+A diferença mais importante é outra: em binária o acerto precisa vencer o
+payout, e 54,05% é só o empate. Em spot, o que decide é a relação entre o
+ganho e a perda:
+
+| razão alvo/stop | acerto necessário para empatar |
+|---|---|
+| 1x (alvo = stop) | 50,0% |
+| 1,5x | 40,0% |
+| 2x | 33,3% |
+| 3x | 25,0% |
+
+Com alvo 2x maior que o stop, **34% de acerto já dá lucro**. Isso é
+impossível numa binária de payout 85%.
+
+### Como rodar
+
+```powershell
+python -m trading_bot.cli backtest-spot --candles 3000 --timeframe 15 --stop 1.0 --target 2.0
+```
+
+O que cada opção faz:
+
+| opção | significado |
+|---|---|
+| `--stop 1.0` | vende se cair 1% (limita a perda) |
+| `--target 2.0` | vende se subir 2% (realiza o lucro) |
+| `--fee 0.1` | taxa da Binance por ordem (padrão já correto) |
+| `--slippage` | simula executar a preço pior que o pedido |
+| `--max-bars` | fecha a posição após N candles, se nada foi tocado |
+
+A coluna **payoff** no relatório é ganho médio ÷ perda média — em spot ela
+importa mais que a coluna de acerto.
+
+### Antes de conectar de verdade
+
+O adaptador Binance exige `python-binance`, que não vem instalado:
+
+```powershell
+python -m pip install python-binance
+```
+
+E no `.env`:
+
+```env
+BROKER=binance
+BINANCE_API_KEY=sua_chave
+BINANCE_API_SECRET=seu_segredo
+BINANCE_TESTNET=true
+SYMBOL=BTCUSDT
+```
+
+**Comece pela testnet** (`BINANCE_TESTNET=true`): é um ambiente da própria
+Binance com dinheiro fictício. Crie as chaves em
+<https://testnet.binance.vision>.
+
+Quando criar chaves reais, **nunca habilite saque** — marque apenas leitura
+e negociação.
+
+---
+
 ## Comandos que você vai usar
 
 ```powershell
@@ -172,6 +238,9 @@ python -m trading_bot.cli backtest --candles 3000 --holdout --timeframe 15
 # Painel de controle no navegador
 python -m trading_bot.cli dashboard
 # depois abra http://localhost:8000
+
+# Backtest para Binance spot (mecânica diferente: stop e alvo)
+python -m trading_bot.cli backtest-spot --candles 3000 --stop 1.0 --target 2.0
 
 # Rodar o robô (respeita DRY_RUN do .env)
 python -m trading_bot.cli run
