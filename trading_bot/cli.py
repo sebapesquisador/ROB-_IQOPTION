@@ -277,6 +277,20 @@ def _run_holdout(bt, df, names, symbol, args) -> int:
 
     campea = max(dentro, key=lambda r: r["net_profit"])
     nome = campea["strategy"]
+
+    # Campeã eleita com amostra magra tende a ser a mais sortuda, não a
+    # melhor: poucas operações produzem os desvios mais extremos, então a
+    # estratégia que menos opera é a que mais aparece no topo por acaso.
+    if campea["total_trades"] < 30:
+        densas = [r for r in dentro if r["total_trades"] >= 30]
+        alternativa = max(densas, key=lambda r: r["net_profit"]) if densas else None
+        print(f"\n  ⚠ A campeã foi eleita com apenas {campea['total_trades']} operações.")
+        print("    Amostras pequenas geram os desvios mais extremos, então a")
+        print("    estratégia que menos opera é a que mais lidera por sorte.")
+        if alternativa is not None:
+            print(f"    Com ao menos 30 operações, a melhor seria "
+                  f"{alternativa['strategy']} ({alternativa['net_profit']:+.2f}).")
+
     print(f"\n  → campeã na seleção: {nome} "
           f"({campea['win_rate']:.1f}% de acerto, {campea['net_profit']:+.2f})")
 
@@ -300,6 +314,26 @@ def _run_holdout(bt, df, names, symbol, args) -> int:
         print(f"  {r['strategy']:<22}{r['total_trades']:>7}{r['win_rate']:>8.1f}%"
               f"{r['edge_pp']:>+9.1f}p{r['net_profit']:>+11.2f}"
               f"{r.get('p_value', 1.0):>9.3f}{marca}")
+
+    # Agregado das estratégias fora da amostra. Se a perda média por operação
+    # converge para a vantagem da casa, a leitura é direta: o conjunto não
+    # tem vantagem nenhuma e está apenas pagando o spread do payout.
+    n_tot = sum(r["total_trades"] for r in todos_fora.values())
+    lucro_tot = sum(r["net_profit"] for r in todos_fora.values())
+    positivas = [r for r in todos_fora.values() if r["net_profit"] > 0]
+    if n_tot:
+        # Expresso em % da aposta para poder comparar com a vantagem da casa.
+        # A aposta média sai das derrotas, onde o valor perdido é o stake.
+        perdas = sum(r.get("losses", 0) for r in todos_fora.values())
+        stake = sum(abs(r.get("gross_loss", 0.0)) for r in todos_fora.values())
+        aposta_media = stake / perdas if perdas else 0.0
+        esperado_50 = 0.5 * (1 + args.payout) - 1
+        print(f"\n  agregado: {len(positivas)} de {len(todos_fora)} positivas | "
+              f"{n_tot} operações | {lucro_tot:+.2f}")
+        if aposta_media:
+            pct = lucro_tot / n_tot / aposta_media
+            print(f"  resultado médio por operação: {pct:+.2%} da aposta"
+                  f"   (vantagem da casa a 50% de acerto: {esperado_50:+.2%})")
 
     melhor_fora = max(todos_fora.values(), key=lambda r: r["net_profit"])
     if melhor_fora["strategy"] != nome:

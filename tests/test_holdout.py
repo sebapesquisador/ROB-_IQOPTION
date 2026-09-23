@@ -27,14 +27,21 @@ class FakeBacktester:
         return [r for r in self.por_fatia[fatia] if r["strategy"] in names]
 
 
-def make_res(nome, trades, win_rate, edge, lucro, p=0.5):
+def make_res(nome, trades, win_rate, edge, lucro, p=0.5, stake=10.0):
+    """Espelha as chaves reais de BacktestResult.to_dict()["summary"]."""
+    wins = round(trades * win_rate / 100)
+    losses = trades - wins
     return {"strategy": nome, "total_trades": trades, "win_rate": win_rate,
-            "edge_pp": edge, "net_profit": lucro, "p_value": p}
+            "edge_pp": edge, "net_profit": lucro, "p_value": p,
+            "wins": wins, "losses": losses,
+            "gross_loss": -losses * stake}
 
 
 class Args:
     holdout = True
     holdout_split = 0.7
+    payout = 0.85
+    balance = 1000.0
 
 
 def make_df(n):
@@ -192,3 +199,83 @@ class TestTodasNoTeste:
         _, out, _ = run(capsys, treino, teste)
         assert "REPROVADA FORA DA AMOSTRA" in out
         assert "SOBREVIVEU" not in out
+
+
+class TestCampeaComAmostraMagra:
+    """
+    Campeã eleita com poucas operações tende a ser a mais sortuda.
+
+    Caso real: rsi_reversal liderou a seleção com 31 trades e 64,5% de
+    acerto, e caiu para 53,9% em 13 trades no holdout — exatamente em cima
+    do ponto de equilíbrio. Poucas operações produzem os desvios mais
+    extremos, então quem menos opera é quem mais lidera por acaso.
+    """
+
+    def test_avisa_quando_campea_tem_menos_de_30_trades(self, capsys):
+        treino = [make_res("magra", 20, 65.0, +11.0, +80.0),
+                  make_res("densa", 200, 55.0, +1.0, +40.0)]
+        teste = [make_res("magra", 40, 52.0, -2.0, -10.0),
+                 make_res("densa", 200, 54.0, 0.0, -5.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "eleita com apenas 20 operações" in out
+        assert "densa" in out.split("campeã na seleção")[0]
+
+    def test_sugere_alternativa_com_amostra_suficiente(self, capsys):
+        treino = [make_res("magra", 20, 65.0, +11.0, +80.0),
+                  make_res("densa", 200, 55.0, +1.0, +40.0)]
+        teste = [make_res("magra", 40, 52.0, -2.0, -10.0),
+                 make_res("densa", 200, 54.0, 0.0, -5.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "a melhor seria densa" in out
+
+    def test_nao_avisa_com_campea_robusta(self, capsys):
+        treino = [make_res("densa", 200, 60.0, +6.0, +300.0),
+                  make_res("outra", 150, 50.0, -4.0, -50.0)]
+        teste = [make_res("densa", 100, 58.0, +4.0, +80.0, p=0.02),
+                 make_res("outra", 90, 49.0, -5.0, -40.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "eleita com apenas" not in out
+
+    def test_sem_alternativa_densa_nao_quebra(self, capsys):
+        """Todas as estratégias com amostra magra: avisa sem sugerir."""
+        treino = [make_res("a", 10, 70.0, +16.0, +50.0),
+                  make_res("b", 12, 60.0, +6.0, +20.0)]
+        teste = [make_res("a", 40, 52.0, -2.0, -10.0),
+                 make_res("b", 40, 51.0, -3.0, -12.0)]
+        code, out, _ = run(capsys, treino, teste)
+        assert "eleita com apenas" in out
+        assert "a melhor seria" not in out
+        assert code == 0
+
+
+class TestAgregado:
+    """
+    A soma das estratégias fora da amostra revela se o conjunto está apenas
+    pagando a vantagem da casa. No teste real do usuário, as 5 estratégias
+    somaram -7,52% por operação contra os -7,50% teóricos do payout 85%.
+    """
+
+    def test_mostra_quantas_ficaram_positivas(self, capsys):
+        treino = [make_res("a", 200, 60.0, +6.0, +300.0),
+                  make_res("b", 200, 50.0, -4.0, -100.0)]
+        teste = [make_res("a", 100, 52.0, -2.0, -30.0),
+                 make_res("b", 100, 51.0, -3.0, -40.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "0 de 2 positivas" in out
+
+    def test_soma_operacoes_e_lucro(self, capsys):
+        treino = [make_res("a", 200, 60.0, +6.0, +300.0),
+                  make_res("b", 200, 50.0, -4.0, -100.0)]
+        teste = [make_res("a", 100, 52.0, -2.0, -30.0),
+                 make_res("b", 150, 51.0, -3.0, -40.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "250 operações" in out
+        assert "-70.00" in out
+
+    def test_conta_positivas_corretamente(self, capsys):
+        treino = [make_res("a", 200, 60.0, +6.0, +300.0),
+                  make_res("b", 200, 50.0, -4.0, -100.0)]
+        teste = [make_res("a", 100, 56.0, +2.0, +50.0, p=0.04),
+                 make_res("b", 100, 51.0, -3.0, -40.0)]
+        _, out, _ = run(capsys, treino, teste)
+        assert "1 de 2 positivas" in out
