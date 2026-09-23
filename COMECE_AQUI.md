@@ -4,6 +4,29 @@ Guia prático, na ordem. Não pule o passo 1.
 
 ---
 
+## Sobre a senha: qual delas vale?
+
+**A senha que vale é sempre a que está cadastrada no site da IQ Option.**
+
+O arquivo `.env` e o GitHub não guardam "senhas válidas" — guardam apenas
+uma cópia de texto do que você digitou. Quem tem essa cópia consegue entrar
+na sua conta, porque é a mesma senha do site.
+
+| Onde está | O que é | Risco |
+|---|---|---|
+| Site da IQ Option | A senha de verdade | — |
+| Seu `.env` local | Cópia, para o robô fazer login | Baixo (só na sua máquina) |
+| Histórico do GitHub | Cópia **antiga**, pública | **Alto** |
+
+Se a senha antiga ainda funcionar no site, qualquer pessoa que leia o
+histórico do GitHub entra na sua conta. Trocar a senha no site invalida a
+cópia exposta — é isso que resolve.
+
+O `.env` da sua máquina está seguro: ele é ignorado pelo Git (está no
+`.gitignore`) e nunca foi enviado ao GitHub.
+
+---
+
 ## Passo 1 — Troque sua senha da IQ Option (faça agora)
 
 Sua senha da IQ Option está **em texto puro no histórico do GitHub**, em um

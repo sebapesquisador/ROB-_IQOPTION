@@ -416,6 +416,54 @@ def _run_holdout(bt, df, names, symbol, args, settings_tf: int | None = None) ->
     return 0
 
 
+def _diagnostico_env() -> None:
+    """
+    Mostra de onde cada valor está vindo.
+
+    Editar o .env e o robô seguir usando o valor antigo é uma das falhas mais
+    difíceis de perceber: nada dá erro, o número simplesmente não muda. As
+    causas comuns são silenciosas — arquivo salvo como `.env.txt` pela
+    extensão oculta do Windows, execução a partir de outra pasta, ou uma
+    variável de ambiente que tem precedência sobre o arquivo.
+    """
+    import os
+
+    cwd = Path.cwd()
+    env = cwd / ".env"
+
+    print("  Arquivo de configuração:")
+    if env.is_file():
+        print(f"    ✔ {env}")
+    else:
+        print(f"    ✖ NÃO existe: {env}")
+        parecidos = sorted(
+            p.name for p in cwd.glob(".env*")
+            if p.is_file() and p.name not in (".env", ".env.example")
+        )
+        if parecidos:
+            print(f"      encontrados na pasta: {', '.join(parecidos)}")
+            if ".env.txt" in parecidos:
+                print("      → o Windows esconde a extensão .txt; renomeie para .env")
+        outros = sorted(p / ".env" for p in cwd.parents if (p / ".env").is_file())
+        if outros:
+            print(f"      existe um .env em: {outros[0]}")
+            print("      → rode o comando de dentro dessa pasta")
+
+    # Variáveis de ambiente têm precedência sobre o arquivo e mascaram a edição
+    observadas = ["TIMEFRAME_MINUTES", "EXPIRATION_MINUTES", "BROKER",
+                  "DRY_RUN", "SYMBOL", "ACCOUNT_MODE"]
+    do_ambiente = {k: os.environ[k] for k in observadas if k in os.environ}
+    if do_ambiente:
+        print("\n  ⚠ Definidas no ambiente (têm prioridade sobre o .env):")
+        for k, v in do_ambiente.items():
+            print(f"    {k}={v}")
+        print("    → enquanto existirem, editar o .env não muda nada.")
+        print("    → para limpar nesta sessão do PowerShell:")
+        for k in do_ambiente:
+            print(f"       Remove-Item Env:\\{k}")
+    print()
+
+
 def cmd_validate(args) -> int:
     try:
         settings = get_settings(reload=True)
@@ -424,6 +472,7 @@ def cmd_validate(args) -> int:
         return 1
 
     print("✔ Configuração válida\n")
+    _diagnostico_env()
     for k, v in settings.masked().items():
         print(f"  {k:<18} {v}")
 
