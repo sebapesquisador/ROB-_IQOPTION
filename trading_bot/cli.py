@@ -394,13 +394,22 @@ def _run_holdout(bt, df, names, symbol, args, settings_tf: int | None = None) ->
                 need_total = int(_math.ceil((30 / por_candle) / (1 - args.holdout_split)))
                 print(f"  Para 30 operações no teste seriam ~{need_total} candles "
                       f"(agora: {len(df)}).")
+                # Aumentar o timeframe NÃO ajuda aqui: cobre mais tempo, mas a
+                # fatia de teste continua com o mesmo número de candles, e os
+                # sinais nascem de candles. O que aumenta operações é mais
+                # candles ou uma fatia de teste maior.
                 if need_total > 5000:
-                    tf_atual = settings_tf or 5
-                    tf_novo = tf_atual * 3
-                    print(f"  Acima do que a corretora entrega em {tf_atual} min. "
-                          "Use um timeframe maior:")
+                    novo_split = max(0.3, round(1 - (30 / por_candle) / len(df), 2))
+                    print("  A corretora dificilmente entrega tantos candles. "
+                          "Alternativa: destinar")
+                    print("  mais dados ao teste (a seleção fica menor, mas o "
+                          "veredito é o que importa):")
                     print(f"  python -m trading_bot.cli backtest --candles "
-                          f"{args.candles} --holdout --timeframe {tf_novo}")
+                          f"{args.candles} --holdout --holdout-split {novo_split}")
+                    print("  Observação: aumentar --timeframe cobre mais tempo, "
+                          "mas não gera mais")
+                    print("  operações — a fatia de teste continua com o mesmo "
+                          "número de candles.")
     elif out["edge_pp"] <= 0:
         print("  REPROVADA FORA DA AMOSTRA: a vantagem sumiu em dados novos.")
         print("  Era ruído do período de seleção — é assim que backtest bonito")

@@ -330,10 +330,15 @@ class TestInconclusivoOrienta:
         assert "Para 30 operações no teste seriam" in out
         assert "(agora: 3000)" in out
 
-    def test_sugere_timeframe_quando_inviavel(self, capsys):
-        """6924 candles de 5min excedem o histórico da corretora."""
+    def test_sugere_split_menor_quando_inviavel(self, capsys):
+        """
+        Regressão: a sugestão era "--timeframe 45", que não resolve. Timeframe
+        maior cobre mais tempo, mas a fatia de teste continua com o mesmo
+        número de candles — e as operações nascem de candles, não de tempo.
+        """
         _, out, _ = self._cenario(capsys, 13)
-        assert "--timeframe" in out
+        assert "--holdout-split" in out
+        assert "não gera mais" in out
 
     def test_nao_sugere_timeframe_quando_viavel(self, capsys):
         """Com 28 trades faltam poucos candles; basta pedir mais."""
@@ -368,8 +373,8 @@ class TestFlagTimeframe:
         out = build_parser().parse_args(["backtest", "--candles", "3000"])
         assert out.timeframe is None
 
-    def test_sugestao_usa_o_timeframe_atual(self, capsys):
-        """A sugestão deve propor 3x o timeframe corrente, com comando pronto."""
+    def test_sugestao_nao_recomenda_timeframe_maior(self, capsys):
+        """Timeframe maior não aumenta o número de operações no teste."""
         treino = [make_res("a", 31, 64.5, +10.5, +60.48, 0.162)]
         teste = [make_res("a", 13, 53.9, -0.2, -1.06, 0.617)]
         df = make_df(3000)
@@ -381,5 +386,5 @@ class TestFlagTimeframe:
         from trading_bot.cli import _run_holdout
         _run_holdout(bt, df, ["a"], "EURUSD", A(), 5)
         out = capsys.readouterr().out
-        assert "--timeframe 15" in out
-        assert "Acima do que a corretora entrega em 5 min" in out
+        assert "--holdout-split" in out
+        assert "aumentar --timeframe" in out
