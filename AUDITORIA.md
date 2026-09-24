@@ -21,6 +21,11 @@ O log do próprio robô (`bot_iqoption.log`) confirma o resultado:
 
 ---
 
+> **Atualização após a fase Binance.** O veredito final não é sobre
+> corretora nem sobre parâmetros: nenhuma das cinco estratégias baseadas em
+> indicadores se distingue de entradas sorteadas, nem na IQ Option nem no
+> mercado spot, nem com taxa zero. Detalhes na seção 5.6.
+
 ## 2. O que estava bom
 
 Nem tudo precisava ser jogado fora. Estes pontos foram preservados:
@@ -496,7 +501,126 @@ convergente com a teoria. Não é limitação do robô nem falta de dados — é
 constatação de que análise técnica sobre candles não supera a vantagem
 estrutural de 7,5% da corretora.
 
+### 5.6 Fase Binance: o mesmo teste onde o custo é 38× menor
+
+A conclusão da fase IQ Option deixava uma dúvida legítima: as estratégias
+falharam por serem ruins, ou porque **nenhuma** estratégia sobrevive a uma
+vantagem da casa de 7,5% por operação? A Binance responde isso — no mercado
+spot o custo é a taxa de 0,1% por ordem, **0,2% ida e volta**.
+
+### Por que spot muda a matemática
+
+| | binária (payout 85%) | spot (taxa 0,1%) |
+|---|---|---|
+| custo por operação | **7,50%** | **0,20%** |
+| perda máxima | 100% da aposta | distância até o stop |
+| acerto de equilíbrio | 54,05% fixo | depende do alvo/stop |
+
+Em binária o acerto de equilíbrio é imposto pela corretora. Em spot ele é
+escolhido por você: com alvo 2× maior que o stop, 40% de acerto já paga
+(33,3% sem taxa). Quatro vitórias em dez podem dar lucro — impossível numa
+binária de payout 85%.
+
+### Resultado: 1585 operações, 312 dias de BTCUSDT
+
+Barreiras de stop 1% e alvo 2%, dados reais da mainnet:
+
+| estratégia | n | acerto | payoff | lucro | z vs sorteio |
+|---|---|---|---|---|---|
+| rsi_reversal | 121 | 37,2% | 1,48 | −1,13 | +0,90 |
+| bollinger_reversion | 298 | 33,9% | 1,49 | −5,55 | +0,21 |
+| trend_pullback | 310 | 33,2% | 1,50 | −6,28 | −0,05 |
+| macd_momentum | 296 | 31,8% | 1,50 | −7,29 | −0,56 |
+| confluence | 560 | 33,8% | 1,49 | −10,58 | +0,23 |
+| **agregado** | **1585** | **33,59%** | — | **−30,83** | **+0,21** |
+
+O número que resume tudo: **prejuízo total −30,83, taxas pagas 31,56**. O
+resultado bruto foi **+0,73** em dez meses. As estratégias não perderam para
+o mercado; perderam exatamente o valor das taxas.
+
+### O piso que ninguém estava medindo
+
+Com stop 1% e alvo 2%, o preço tende a tocar o stop duas vezes mais que o
+alvo. O acerto esperado de uma entrada **sorteada** é `stop/(stop+alvo)` =
+33,3%. Verificado num passeio aleatório de 60 mil candles, onde não há
+previsibilidade por construção:
+
+| barreiras | obtido | teoria |
+|---|---|---|
+| 1:1 | 48,7% | 50,0% |
+| 2:1 | 31,9% | 33,3% |
+| 3:1 | 23,7% | 25,0% |
+
+As cinco estratégias aterrissaram entre 31,8% e 33,9%. **Não é coincidência
+entre elas: é a mecânica das barreiras.** Nenhuma carrega informação.
+
+### Varredura de 12 combinações de barreiras
+
+Restava a objeção "e se forem só os parâmetros?". A varredura testou de
+0,5%/0,5% a 4%/12%, comparando sempre o melhor de 5 estratégias com o melhor
+de 5 sorteios:
+
+* `falta` positiva (acerto acima do equilíbrio) com amostra ≥100: **nenhuma**
+* p abaixo do alpha de Bonferroni (0,0008): **nenhum**; melhor p = 0,008
+* vantagem média sobre o sorteio: **+2,3pp**
+
+Esse +2,3pp parece sinal e não é: a mesma varredura sobre **ruído puro**
+produz **+1,6pp de média e até +4,6pp**, porque comparar o melhor de vários
+sempre infla. A melhor linha com amostra decente (stop 1%, alvo 3%, 114
+operações, acerto 28,9%) fica 1,1pp **abaixo** do equilíbrio.
+
+E a taxa não é o obstáculo principal:
+
+| taxa | equilíbrio | falta | p |
+|---|---|---|---|
+| 0,100% | 30,00% | −1,10pp | 0,172 |
+| 0,075% (desconto BNB) | 28,75% | +0,15pp | 0,172 |
+| **0,000%** | **25,00%** | **+3,90pp** | **0,172** |
+
+Mesmo operando **de graça**, o p-valor não se move — porque ele mede se o
+acerto se distingue do acaso, e não se distingue. Zerar a taxa transformaria
+um prejuízo pequeno num lucro indistinguível de zero.
+
+### Conclusão das duas fases
+
+Três diagnósticos independentes convergem:
+
+1. **IQ Option**: −10,33% por operação em 1333 operações
+2. **Binance spot**: resultado bruto +0,73 em 1585 operações
+3. **Sorteio**: estatisticamente idêntico às cinco estratégias
+
+A fase IQ Option podia ser explicada pelo payout. A fase Binance remove essa
+explicação e isola a causa: **indicadores calculados sobre o preço não
+preveem o preço**. RSI, MACD e Bollinger são funções públicas do mesmo
+histórico que todos veem; se previssem algo, a previsão já estaria embutida
+na cotação.
+
+O que sobrou de valor é a infraestrutura de medição — referência aleatória,
+correção de multiplicidade, validação fora da amostra, benchmark de comprar
+e segurar. Ela impede que a próxima ideia seja adotada por otimismo.
+
+---
+
 ## 6. Recomendações
+
+### O que os dados recomendam
+
+Não operar nenhuma das cinco estratégias, em nenhuma das duas corretoras.
+Não é conservadorismo: é o que 2918 operações medidas mostram.
+
+Se quiser continuar, os caminhos com base real partem de informação que o
+indicador não tem:
+
+1. **Dados fora do preço** — funding rate de perpétuos, livro de ofertas,
+   fluxo. Vantagens em cripto costumam vir daí, não de médias móveis.
+2. **Estratégias estruturais** — arbitragem entre corretoras, market making,
+   funding farming. Não dependem de prever direção.
+3. **Execução disciplinada** — usar o robô para executar decisões suas sem
+   hesitação nem martingale, aceitando que a vantagem, se existir, é sua.
+
+Qualquer ideia nova deve passar pelos mesmos filtros já implementados:
+referência aleatória, `--holdout`, correção de Bonferroni e comparação com
+comprar e segurar.
 
 ### Antes de usar dinheiro real
 
