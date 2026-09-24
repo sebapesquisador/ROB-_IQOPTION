@@ -232,6 +232,32 @@ entrada prever algo.
 
 Leva alguns minutos com 30 mil candles.
 
+### Duas armadilhas que o relatório agora evita
+
+**1. "Ganhar do sorteio" não é lucro.** A varredura mostra a coluna
+`falta` — distância até o equilíbrio líquido. Uma estratégia pode ter
+sinal real e ainda assim perder dinheiro, se o sinal for menor que a taxa.
+O que paga conta é `falta` positiva, não `diferença` positiva.
+
+**2. Comparar o melhor de muitos infla tudo.** Rodei a varredura sobre um
+passeio aleatório, onde não existe sinal por construção. Resultado: a
+coluna `diferença` deu **+1,6pp de média e até +4,6pp**, e a coluna
+`falta` chegou a **+8,8pp** — tudo ruído. O p-valor com correção de
+Bonferroni reprovou **as 12 linhas**, como devia.
+
+Por isso a regra: só acredite na linha se ela tiver `falta` positiva
+**e** `p` abaixo do alpha mostrado no cabeçalho.
+
+### Comprar e segurar: o benchmark que humilha robôs
+
+O relatório mostra quanto o ativo variou no período. É a comparação mais
+desconfortável e a mais honesta: num mercado que subiu 60%, uma estratégia
+só comprada pode fechar no lucro e mesmo assim ter sido muito pior que não
+fazer nada.
+
+Vale no sentido inverso também — se o ativo caiu, perder pouco é
+resultado.
+
 ### O tamanho da amostra é o que mais engana
 
 3000 candles de 15 min cobrem só ~31 dias e costumam render 10 a 40

@@ -484,3 +484,78 @@ class TestSinaisPreparados:
         bt.stop_loss_pct, bt.take_profit_pct = 2.0, 6.0
         primeira_b = bt.run(df, "aleatório", preparado=prep).trades[0].entry_time
         assert primeira_a == primeira_b
+
+
+class TestComprarESegurar:
+    """O benchmark que nenhuma estratégia só comprada pode ignorar.
+
+    Num mercado que subiu muito, entrar e sair o tempo todo pode dar lucro
+    e ainda assim ser muito pior que não ter feito nada. Sem esta linha, o
+    relatório deixaria passar exatamente esse caso.
+    """
+
+    def _serie(self, precos):
+        return candles([(p, p * 1.001, p * 0.999, p) for p in precos])
+
+    def test_alta_de_dez_por_cento(self):
+        from trading_bot.backtest.spot import comprar_e_segurar
+        # Compra no OPEN do primeiro (100), vende no CLOSE do último (110).
+        r = comprar_e_segurar(self._serie([100, 105, 110]), fee_pct=0.0)
+        assert r == pytest.approx(10.0)
+
+    def test_queda_aparece_negativa(self):
+        from trading_bot.backtest.spot import comprar_e_segurar
+        r = comprar_e_segurar(self._serie([100, 90, 80]), fee_pct=0.0)
+        assert r == pytest.approx(-20.0)
+
+    def test_taxa_cobrada_na_compra_e_na_venda(self):
+        from trading_bot.backtest.spot import comprar_e_segurar
+        com = comprar_e_segurar(self._serie([100, 110]), fee_pct=0.1)
+        sem = comprar_e_segurar(self._serie([100, 110]), fee_pct=0.0)
+        assert com < sem
+        # Duas ordens a 0,1%: perde ~0,2 pontos percentuais.
+        assert sem - com == pytest.approx(0.22, abs=0.02)
+
+    def test_mercado_de_lado_fica_perto_de_zero(self):
+        from trading_bot.backtest.spot import comprar_e_segurar
+        assert abs(comprar_e_segurar(self._serie([100, 103, 97, 100]),
+                                     fee_pct=0.0)) < 0.01
+
+    @pytest.mark.parametrize("linhas", [[], [100]])
+    def test_serie_curta_nao_quebra(self, linhas):
+        from trading_bot.backtest.spot import comprar_e_segurar
+        df = self._serie(linhas) if linhas else pd.DataFrame(
+            columns=["timestamp", "open", "high", "low", "close", "volume"])
+        assert comprar_e_segurar(df) == 0.0
+
+
+class TestPBinomial:
+    """O filtro que separa sinal de sorte quando a amostra é pequena."""
+
+    def test_metade_dos_acertos_com_moeda_justa_e_meio(self):
+        from trading_bot.backtest.spot import p_binomial_cauda
+        # P(X >= 50) com n=100, p=0.5 é pouco acima de 0,5 (inclui o 50).
+        assert 0.5 < p_binomial_cauda(50, 100, 0.5) < 0.6
+
+    def test_muitos_acertos_viram_p_baixo(self):
+        from trading_bot.backtest.spot import p_binomial_cauda
+        assert p_binomial_cauda(70, 100, 0.5) < 0.001
+
+    def test_amostra_pequena_nao_convence(self):
+        from trading_bot.backtest.spot import p_binomial_cauda
+        # 7 de 10 parece ótimo, mas o acaso faz isso com frequência.
+        assert p_binomial_cauda(7, 10, 0.5) > 0.1
+        # A MESMA taxa em 200 operações é outra história.
+        assert p_binomial_cauda(140, 200, 0.5) < 1e-7
+
+    def test_n_grande_nao_estoura(self):
+        from trading_bot.backtest.spot import p_binomial_cauda
+        # math.comb estouraria em float aqui; lgamma não.
+        v = p_binomial_cauda(1700, 5000, 1 / 3)
+        assert 0.0 <= v <= 1.0
+
+    @pytest.mark.parametrize("k,n,p", [(0, 100, 0.5), (5, 0, 0.5),
+                                       (10, 100, 0.0), (10, 100, 1.0)])
+    def test_bordas_devolvem_um(self, k, n, p):
+        from trading_bot.backtest.spot import p_binomial_cauda
+        assert p_binomial_cauda(k, n, p) == 1.0

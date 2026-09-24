@@ -540,7 +540,8 @@ def cmd_backtest_spot(args) -> int:
 
     results = bt.compare(df, names, symbol)
 
-    from .backtest.spot import breakeven_liquido, payoff_liquido
+    from .backtest.spot import (breakeven_liquido, comprar_e_segurar,
+                                payoff_liquido)
 
     rr = args.target / args.stop if args.stop else 0
     be_bruto = 100 / (1 + rr) if rr else 0
@@ -639,28 +640,57 @@ def cmd_backtest_spot(args) -> int:
             print(f"\n    ({preciso} candles de {tf} min ≈ {dias:.0f} dias; "
                   f"a busca é paginada, leva alguns segundos)")
 
+    # Benchmark que nenhuma estratégia só comprada pode ignorar.
+    bh = comprar_e_segurar(df, args.fee)
+    print(f"\n  Comprar e segurar no período: {bh:+.1f}%")
+    if bh > 5:
+        print(f"    O {symbol} subiu. Estratégia só comprada herda parte dessa alta,")
+        print(f"    então acerto alto aqui não é mérito da regra — é do mercado.")
+    elif bh < -5:
+        print(f"    O {symbol} caiu. Num mercado assim, perder pouco já é resultado;")
+        print(f"    compare contra {bh:+.1f}%, não contra zero.")
+    else:
+        print(f"    Mercado de lado no período: o benchmark não atrapalha nem ajuda.")
+    print(f"    (as estratégias arriscam ~1% do saldo por operação, então os")
+    print(f"     valores em dólar não são diretamente comparáveis — o que")
+    print(f"     se compara é a existência de vantagem, não o tamanho)")
+
     print("\n  Valide em conta demo por semanas antes de considerar dinheiro real.\n")
     return 0
 
 
 def _varredura_barreiras(bt, df, names, symbol, args) -> int:
-    """Testa várias combinações de stop e alvo contra entradas sorteadas.
+    """Testa combinações de stop e alvo contra entradas sorteadas.
 
-    Existe para fechar a objeção natural de quem vê um resultado ruim:
-    "e se o problema forem só os parâmetros?". Se a estratégia carrega
-    informação, ela vence o sorteio em alguma configuração. Se acompanha o
-    sorteio em todas, o que falta não é ajuste — é sinal.
+    Fecha a objeção que sobra depois de um resultado ruim: "e se o problema
+    forem só os parâmetros?". Se a estratégia carrega informação, ela vence
+    o sorteio em alguma configuração.
+
+    Duas colunas são o coração da tabela e foram acrescentadas depois de a
+    primeira versão enganar:
+
+    * `falta` — distância até o equilíbrio líquido. Ganhar do sorteio não
+      paga conta; o que paga é passar do equilíbrio. Uma estratégia pode
+      ter sinal real e ainda assim perder dinheiro, se o sinal for menor
+      que o custo.
+    * `p` — chance de o acaso produzir aquela diferença, dado o número de
+      operações. Sem ela, +9,4pp em 80 operações parece mais forte que
+      +2,5pp em 500, quando é o contrário.
 
     Os sinais são calculados uma vez por estratégia e reaproveitados em
-    todas as barreiras. Além de ser bem mais rápido, garante que a única
-    coisa mudando entre as linhas é o stop e o alvo.
+    todas as barreiras: a única coisa que muda entre as linhas é o stop e
+    o alvo.
     """
-    from .backtest.spot import breakeven_liquido
+    from .backtest.spot import breakeven_liquido, p_binomial_cauda
 
     grade = [
         (0.5, 0.5), (0.5, 1.0), (0.5, 1.5),
         (1.0, 1.0), (1.0, 2.0), (1.0, 3.0),
         (2.0, 2.0), (2.0, 4.0), (2.0, 6.0),
+        # Barreiras largas: a taxa é um custo fixo em %, então quanto maior
+        # o movimento buscado, menos ela pesa. Se houver sinal, é aqui que
+        # ele tem a melhor chance de sobrar depois do custo.
+        (3.0, 3.0), (3.0, 9.0), (4.0, 12.0),
     ]
     SEEDS = 5
 
@@ -680,19 +710,24 @@ def _varredura_barreiras(bt, df, names, symbol, args) -> int:
     densidade = sum(bt.densidade_de_sinais(pp) for pp in preps.values()) / len(preps)
     aleatorios = [bt.preparar_aleatorio(dados, densidade, seed) for seed in range(SEEDS)]
 
-    print("\n" + "=" * 105)
+    # Toda comparação feita conta para a correção de multiplicidade.
+    comparacoes = len(grade) * len(preps)
+    alpha = 0.05 / comparacoes
+
+    print("\n" + "=" * 112)
     print(f"  VARREDURA DE BARREIRAS — {symbol}, {len(df)} candles, "
           f"taxa {args.fee}% por ordem")
-    print("  a pergunta: existe alguma combinação em que a estratégia "
-          "vença o sorteio?")
-    print("=" * 105)
-    print(f"  {'stop':>5}{'alvo':>6}{'equilíbrio':>12}   "
-          f"{'melhor estratégia':<22}{'acerto':>8}"
-          f"{'melhor sorteio':>20}"
-          f"{'diferença':>11}{'lucro':>9}")
-    print("-" * 105)
+    print(f"  {comparacoes} comparações → exigimos p < {alpha:.4f} "
+          f"(0,05 corrigido por Bonferroni)")
+    print("=" * 112)
+    print(f"  {'stop':>5}{'alvo':>6}{'equil.':>9}   {'melhor estratégia':<21}"
+          f"{'n':>6}{'acerto':>8}{'sorteio':>9}{'ganha do':>10}{'falta':>9}"
+          f"{'p':>9}")
+    print(f"  {'':>5}{'':>6}{'':>9}   {'':<21}{'':>6}{'':>8}{'':>9}"
+          f"{'sorteio':>10}{'p/ lucro':>9}{'':>9}")
+    print("-" * 112)
 
-    diferencas = []
+    diferencas, faltas, achados = [], [], []
     for stop, alvo in grade:
         bt.stop_loss_pct, bt.take_profit_pct = stop, alvo
         be = breakeven_liquido(stop, alvo, args.fee, args.slippage)
@@ -701,52 +736,67 @@ def _varredura_barreiras(bt, df, names, symbol, args) -> int:
         for nome, prep in preps.items():
             r = bt.run(df, nome, symbol, preparado=prep)
             if r.stats.total_trades >= 20:
-                linhas.append((nome, r.stats.win_rate, r.stats.net_profit))
-        if not linhas:
-            print(f"  {stop:>5.1f}{alvo:>6.1f}{be:>11.1f}%   "
-                  f"(nenhuma chegou a 20 operações)")
-            continue
-
+                linhas.append((nome, r.stats.win_rate, r.stats.net_profit,
+                               r.stats.total_trades, r.stats.wins))
         acertos = []
         for prep_a in aleatorios:
             ra = bt.run(df, "aleatório", symbol, preparado=prep_a)
             if ra.stats.total_trades:
                 acertos.append(ra.stats.win_rate)
-        if not acertos:
+        if not linhas or not acertos:
+            print(f"  {stop:>5.1f}{alvo:>6.1f}{be:>8.1f}%   "
+                  f"(operações de menos para comparar)")
             continue
 
-        # Comparação justa: a coluna da estratégia é o melhor de N, então o
-        # sorteio também tem de ser o melhor de N sementes. Confrontar o
-        # melhor de 5 contra a MÉDIA do acaso fabrica vantagem do nada — foi
-        # exatamente assim que a fase anterior produziu uma ilusão de +9pp.
+        # Melhor contra melhor: a coluna da estratégia é o máximo de N, o
+        # sorteio também. Confrontar o melhor de N com a média do acaso
+        # fabrica vantagem — foi como a fase da IQ Option produziu +9pp.
         sorteio = max(acertos)
-        media_sorteio = sum(acertos) / len(acertos)
+        # Para o p-valor, a hipótese nula é o comportamento TÍPICO do acaso.
+        nulo = sum(acertos) / len(acertos) / 100.0
 
-        nome, acerto, lucro = max(linhas, key=lambda l: l[1])
+        nome, acerto, lucro, n, wins = max(linhas, key=lambda l: l[1])
         dif = acerto - sorteio
+        falta = acerto - be
+        pv = p_binomial_cauda(wins, n, nulo)
         diferencas.append(dif)
-        marca = "  <<" if acerto > be else ""
-        print(f"  {stop:>5.1f}{alvo:>6.1f}{be:>11.1f}%   {nome:<22}"
-              f"{acerto:>7.1f}%{sorteio:>19.1f}%{dif:>+10.1f}pp"
-              f"{lucro:>+9.2f}{marca}")
+        faltas.append(falta)
+        if pv < alpha and falta > 0:
+            achados.append((stop, alvo, nome, falta, pv))
 
-    print("=" * 105)
+        marca = "  <<" if falta > 0 else ""
+        print(f"  {stop:>5.1f}{alvo:>6.1f}{be:>8.1f}%   {nome:<21}{n:>6}"
+              f"{acerto:>7.1f}%{sorteio:>8.1f}%{dif:>+9.1f}pp{falta:>+8.1f}pp"
+              f"{pv:>9.3f}{marca}")
+
+    print("=" * 112)
     if diferencas:
         media = sum(diferencas) / len(diferencas)
-        melhor = max(diferencas)
-        print(f"\n  Vantagem média sobre o sorteio: {media:+.1f}pp "
-              f"(melhor combinação: {melhor:+.1f}pp)")
-        print(f"  Ambas as colunas são o melhor de {SEEDS} — estratégias e "
-              f"sementes disputam em igualdade.")
-        if melhor <= 1.5:
-            print("\n  Nenhuma combinação de barreiras produz vantagem. O stop e o")
-            print("  alvo decidem quantas operações ganham, mas não SE há o que")
-            print("  ganhar — isso depende de a entrada prever alguma coisa, e ela")
-            print("  não prevê. Ajustar parâmetros aqui é reorganizar o acaso.")
+        melhor_falta = max(faltas)
+        print(f"\n  Ganha do sorteio, em média: {media:+.1f}pp — "
+              f"mas o que paga conta é a coluna 'falta'.")
+        print(f"  Melhor distância até o lucro: {melhor_falta:+.1f}pp "
+              f"(negativo = ainda no prejuízo).")
+
+        if achados:
+            print("\n  Combinações que passaram nos dois critérios "
+                  "(lucrativas E significativas):")
+            for stop, alvo, nome, falta, pv in achados:
+                print(f"    stop {stop}% / alvo {alvo}% — {nome} "
+                      f"({falta:+.1f}pp, p={pv:.4f})")
+            print("\n  Antes de acreditar: rode a combinação isolada com "
+                  "--holdout. Escolher a\n  melhor entre muitas premia a "
+                  "sorte, e a correção de Bonferroni não\n  desfaz isso "
+                  "completamente.")
+        elif melhor_falta > -2.0:
+            print("\n  Nenhuma combinação fecha no azul, mas a melhor chegou perto.")
+            print("  Repare que a coluna 'falta' encolhe conforme as barreiras")
+            print("  aumentam: a taxa é um custo fixo em %, então quanto maior o")
+            print("  movimento buscado, menos ela pesa. Vale testar barreiras ainda")
+            print("  mais largas e uma taxa menor (--fee 0.075 com desconto BNB).")
         else:
-            print(f"\n  Uma combinação se destaca ({melhor:+.1f}pp). Antes de "
-                  f"acreditar, rode-a\n  isolada com --holdout: escolher a melhor "
-                  f"de {len(diferencas)} já premia a sorte.")
+            print("\n  Nenhuma combinação chega ao equilíbrio. O stop e o alvo")
+            print("  decidem QUANTAS operações ganham, não SE há o que ganhar.")
     print("\n  << marca as linhas em que o acerto supera o equilíbrio líquido.\n")
     return 0
 

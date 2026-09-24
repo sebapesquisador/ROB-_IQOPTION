@@ -50,6 +50,50 @@ from ..core.strategies import get_strategy
 logger = logging.getLogger(__name__)
 
 
+def p_binomial_cauda(k: int, n: int, p: float) -> float:
+    """P(X >= k) numa binomial(n, p). Usa lgamma: math.comb estoura em n grande.
+
+    Responde "qual a chance de o acaso produzir pelo menos este tanto de
+    acertos?". Sem isso, qualquer sequência boa em poucas operações vira
+    descoberta.
+    """
+    if n <= 0 or k <= 0:
+        return 1.0
+    if not 0.0 < p < 1.0:
+        return 1.0
+    k = min(k, n)
+    log_p, log_q = math.log(p), math.log1p(-p)
+    total = 0.0
+    for i in range(k, n + 1):
+        total += math.exp(
+            math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1)
+            + i * log_p + (n - i) * log_q
+        )
+    return min(1.0, total)
+
+
+def comprar_e_segurar(candles: pd.DataFrame, fee_pct: float = 0.1) -> float:
+    """Retorno (%) de comprar no primeiro candle e vender no último.
+
+    É o benchmark que faltava, e o mais importante para estratégia só
+    comprada: num mercado que subiu 60%, entrar e sair o tempo todo pode
+    dar lucro e ainda assim ser muito pior que não ter feito nada. O acerto
+    alto seria herança da alta, não mérito da regra.
+
+    Vale também no sentido inverso: se o ativo caiu, perder pouco pode ser
+    um bom resultado.
+    """
+    if candles is None or len(candles) < 2:
+        return 0.0
+    entrada = float(candles["open"].iloc[0])
+    saida = float(candles["close"].iloc[-1])
+    if entrada <= 0:
+        return 0.0
+    fee = fee_pct / 100.0
+    liquido = (saida * (1 - fee)) / (entrada * (1 + fee))
+    return (liquido - 1.0) * 100.0
+
+
 def payoff_liquido(
     stop_pct: float, target_pct: float,
     fee_pct: float = 0.1, slippage_pct: float = 0.0,
@@ -165,16 +209,7 @@ class SpotResult:
             return 1.0
         k = self.stats.wins
         p = self.breakeven_win_rate / 100.0
-        if k <= 0 or not 0.0 < p < 1.0:
-            return 1.0
-        log_p, log_q = math.log(p), math.log1p(-p)
-        total = 0.0
-        for i in range(k, n + 1):
-            total += math.exp(
-                math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1)
-                + i * log_p + (n - i) * log_q
-            )
-        return min(1.0, total)
+        return p_binomial_cauda(k, n, p)
 
     def _verdict(self) -> str:
         if self.stats.total_trades < 30:
