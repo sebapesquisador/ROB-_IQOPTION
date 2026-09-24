@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from .core.config import LOG_DIR, get_settings
+from .core.config import LOG_DIR, checar_simbolo, get_settings
 from .core.logging_setup import setup_logging
 
 logger = logging.getLogger("trading_bot")
@@ -492,6 +492,14 @@ def cmd_backtest_spot(args) -> int:
     if getattr(args, "timeframe", None):
         settings.timeframe_minutes = args.timeframe
 
+    # Antes de conectar: conectar leva segundos e o erro só apareceria
+    # depois, parecendo problema de rede em vez de ativo errado.
+    problema = checar_simbolo(settings.broker, settings.symbol)
+    if problema:
+        print(f"\n✖ {problema}\n")
+        print("  Corrija SYMBOL no .env ou passe --symbol BTCUSDT nesta linha.\n")
+        return 1
+
     broker = create_broker(settings)
     if not broker.connect():
         logger.error("falha ao conectar na corretora")
@@ -582,6 +590,9 @@ def cmd_validate(args) -> int:
     print(f"    martingale           {'ATIVO ⚠' if r.martingale_enabled else 'desligado ✔'}")
 
     warnings = []
+    problema = checar_simbolo(settings.broker, settings.symbol)
+    if problema:
+        warnings.append(problema)
     if settings.is_live:
         warnings.append("operando em CONTA REAL")
     if r.martingale_enabled:

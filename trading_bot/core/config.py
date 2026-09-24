@@ -253,6 +253,63 @@ class Settings(BaseSettings):
         }
 
 
+# Moedas de cotação mais comuns na Binance. Um par spot é sempre
+# BASE+QUOTE grudados, sem separador: BTCUSDT, ETHBTC, SOLBRL.
+_QUOTES_BINANCE = (
+    "USDT", "FDUSD", "USDC", "BUSD", "TUSD", "DAI",
+    "BTC", "ETH", "BNB", "TRY", "EUR", "BRL", "GBP", "JPY", "ARS",
+)
+
+# Pares que só existem no mercado de câmbio (IQ Option), nunca na Binance.
+_FOREX = (
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD",
+    "EURGBP", "EURJPY", "GBPJPY", "EURCHF", "AUDJPY", "EURAUD", "USDBRL",
+)
+
+
+def checar_simbolo(broker: Broker, symbol: str) -> Optional[str]:
+    """Detecta ativo incompatível com a corretora escolhida.
+
+    Existe porque o erro natural é silencioso até a hora errada: com
+    BROKER=binance e SYMBOL=EURUSD a configuração é formalmente válida,
+    o robô conecta, e só falha ao pedir candles. Retorna a explicação
+    (ou None quando o par é plausível).
+    """
+    s = (symbol or "").strip().upper()
+    if not s:
+        return None
+
+    if broker is Broker.BINANCE:
+        limpo = s.replace("/", "").replace("-", "").replace("_", "")
+        if limpo in _FOREX:
+            return (
+                f"SYMBOL={symbol} é um par de câmbio (Forex), que a Binance "
+                f"não negocia. Use um par de cripto, como BTCUSDT ou ETHUSDT."
+            )
+        if s != limpo:
+            return (
+                f"SYMBOL={symbol} tem separador. Na Binance o par é grudado: "
+                f"{limpo}."
+            )
+        if not limpo.isalnum():
+            return f"SYMBOL={symbol} tem caracteres inválidos para a Binance."
+        if not limpo.endswith(_QUOTES_BINANCE):
+            return (
+                f"SYMBOL={symbol} não termina em uma moeda de cotação "
+                f"conhecida (USDT, BTC, BRL...). Confira o par em "
+                f"binance.com/pt-BR/markets."
+            )
+
+    elif broker is Broker.IQOPTION:
+        if s.endswith(("USDT", "BUSD", "FDUSD")):
+            return (
+                f"SYMBOL={symbol} tem formato de par de cripto da Binance. "
+                f"Na IQ Option o ativo é como EURUSD ou EURUSD-OTC."
+            )
+
+    return None
+
+
 _settings: Optional[Settings] = None
 
 

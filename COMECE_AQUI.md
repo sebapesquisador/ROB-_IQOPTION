@@ -202,6 +202,11 @@ SYMBOL=BTCUSDT
 TIMEFRAME_MINUTES=15
 ```
 
+⚠️ **Troque o `SYMBOL`.** Se você vinha da IQ Option, ele está como
+`EURUSD` — um par de câmbio, que a Binance não negocia. Na Binance o par
+é de cripto e vem grudado, sem barra: `BTCUSDT`, `ETHUSDT`, `SOLBRL`.
+O `validate` avisa quando corretora e ativo não combinam.
+
 Deixe `BINANCE_API_KEY` e `BINANCE_API_SECRET` **vazios**. O robô conecta em
 modo somente leitura, baixa o histórico e recusa qualquer envio de ordem.
 Nem `python-binance` é necessário nessa etapa.
