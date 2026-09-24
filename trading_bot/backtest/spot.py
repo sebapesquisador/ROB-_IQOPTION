@@ -224,6 +224,20 @@ class SpotResult:
             return "ARRISCADA: lucrativa, mas com drawdown alto demais"
         return "APROVADA: lucro consistente, estatisticamente significativo"
 
+    @property
+    def exposicao_pct(self) -> float:
+        """Percentual do tempo com posição aberta.
+
+        Sem isto, comparar com comprar e segurar engana: uma estratégia que
+        fica 95% do tempo em caixa "vence" qualquer mercado em queda sem ter
+        feito nada. Não é mérito — é ausência. A comparação só é honesta à
+        luz de quanto risco cada lado correu.
+        """
+        if not self.candles_tested:
+            return 0.0
+        barras = sum(t.bars_held for t in self.trades)
+        return min(100.0, barras / self.candles_tested * 100.0)
+
     def to_dict(self) -> dict[str, Any]:
         ret = ((self.final_balance - self.initial_balance) / self.initial_balance * 100
                if self.initial_balance else 0.0)
@@ -232,6 +246,7 @@ class SpotResult:
                 "strategy": self.strategy,
                 "symbol": self.symbol,
                 "candles_tested": self.candles_tested,
+                "exposicao_pct": round(self.exposicao_pct, 1),
                 "initial_balance": round(self.initial_balance, 2),
                 "final_balance": round(self.final_balance, 2),
                 "return_pct": round(ret, 2),

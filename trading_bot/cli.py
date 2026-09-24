@@ -719,9 +719,31 @@ def cmd_backtest_spot(args) -> int:
                       f"    ruído: nestes dados ela não prevê nada que o acaso "
                       f"não preveja.")
             elif dif > 0:
-                print(f"    {melhor['strategy']} fica {dif:+.1f}pp acima do sorteio — "
-                      f"há sinal,\n    mas ainda {melhor['win_rate'] - be_liq:+.1f}pp "
-                      f"do equilíbrio de {be_liq:.1f}%.")
+                # Ficar acima da faixa de 7 sementes NÃO é significância:
+                # a faixa depende do número de sementes, não do tamanho da
+                # amostra. Sem este teste o relatório anunciava "há sinal"
+                # para um resultado com p de 0,17.
+                from .backtest.spot import p_binomial_cauda
+                n_m = melhor["total_trades"]
+                vitorias = round(melhor["win_rate"] * n_m / 100)
+                pv = p_binomial_cauda(vitorias, n_m, base["win_rate"] / 100)
+                falta_be = melhor["win_rate"] - be_liq
+                print(f"    {melhor['strategy']} fica {dif:+.1f}pp acima do sorteio, "
+                      f"em {n_m} operações.")
+                if pv < 0.05:
+                    print(f"    Isso é mais do que o acaso costuma produzir "
+                          f"(p={pv:.3f}), mas ainda\n    {falta_be:+.1f}pp do "
+                          f"equilíbrio de {be_liq:.1f}% — sinal pequeno demais "
+                          f"para pagar o custo.")
+                else:
+                    preciso = _trades_para_significancia(
+                        melhor["win_rate"] / 100, base["win_rate"] / 100)
+                    print(f"    Mas p={pv:.3f}: está dentro do que o acaso produz "
+                          f"nessa amostra.")
+                    if preciso:
+                        print(f"    Seriam necessárias ~{preciso} operações para "
+                              f"essa diferença\n    significar alguma coisa "
+                              f"(tem {n_m}).")
             else:
                 print(f"    {melhor['strategy']} fica {dif:+.1f}pp ABAIXO do sorteio: "
                       f"as regras estão\n    piorando a entrada, não melhorando.")
@@ -755,16 +777,40 @@ def cmd_backtest_spot(args) -> int:
         print(f"    O {symbol} subiu. Estratégia só comprada herda parte dessa alta,")
         print(f"    então acerto alto aqui não é mérito da regra — é do mercado.")
     elif bh < -5:
-        print(f"    O {symbol} caiu. Num mercado assim, perder pouco já é resultado;")
-        print(f"    compare contra {bh:+.1f}%, não contra zero.")
+        print(f"    O {symbol} caiu. Num mercado assim, perder pouco parece bom —")
+        print(f"    mas veja a exposição antes de comemorar: ficar de fora numa")
+        print(f"    queda não é mérito da estratégia, é ausência dela.")
     else:
         print(f"    Mercado de lado no período: o benchmark não atrapalha nem ajuda.")
-    print(f"    (as estratégias arriscam ~1% do saldo por operação, então os")
-    print(f"     valores em dólar não são diretamente comparáveis — o que")
-    print(f"     se compara é a existência de vantagem, não o tamanho)")
+    exposicoes = [(r["strategy"], r.get("exposicao_pct", 0.0))
+                  for r in results if "error" not in r]
+    if exposicoes:
+        media_exp = sum(e for _, e in exposicoes) / len(exposicoes)
+        print(f"    Exposição média das estratégias: {media_exp:.0f}% do tempo "
+              f"com posição aberta,")
+        print(f"    arriscando ~1% do saldo por vez. Comprar e segurar fica "
+              f"100% do tempo")
+        print(f"    exposto com 100% do capital — por isso os valores em dólar não")
+        print(f"    se comparam. O que se compara é a existência de vantagem.")
 
     print("\n  Valide em conta demo por semanas antes de considerar dinheiro real.\n")
     return 0
+
+
+def _trades_para_significancia(taxa: float, nulo: float,
+                               alpha: float = 0.05, teto: int = 50000):
+    """Quantas operações essa diferença precisaria para convencer.
+
+    Transforma "não deu" em algo acionável: ou o usuário consegue essa
+    amostra, ou a diferença é pequena demais para ser perseguida.
+    """
+    from .backtest.spot import p_binomial_cauda
+    if taxa <= nulo:
+        return None
+    for n in range(50, teto, 50):
+        if p_binomial_cauda(round(taxa * n), n, nulo) < alpha:
+            return n
+    return None
 
 
 def _varredura_barreiras(bt, df, names, symbol, args) -> int:

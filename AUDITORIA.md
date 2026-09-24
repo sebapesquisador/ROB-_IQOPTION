@@ -581,6 +581,22 @@ Mesmo operando **de graça**, o p-valor não se move — porque ele mede se o
 acerto se distingue do acaso, e não se distingue. Zerar a taxa transformaria
 um prejuízo pequeno num lucro indistinguível de zero.
 
+### O mercado caiu, e isso não salva ninguém
+
+Nos mesmos 312 dias, comprar e segurar BTCUSDT rendeu **−12,2%**. As
+estratégias perderam entre 0,06% e 0,89% do capital — aparentemente muito
+melhor.
+
+Não é. Elas arriscam ~1% do saldo por operação e passam a maior parte do
+tempo em caixa. **Ficar de fora numa queda não é mérito da estratégia, é
+ausência dela** — uma conta parada teria feito 0%, melhor que todas. Por
+isso o relatório passou a exibir a exposição ao lado do benchmark: comparar
+resultados sem comparar risco corrido é o erro clássico.
+
+O que a queda descarta é uma desculpa: não dá para atribuir o fracasso a um
+mercado de alta que favoreceria comprar e segurar. Num mercado de baixa,
+estratégias só compradas continuaram empatadas com o sorteio.
+
 ### Conclusão das duas fases
 
 Três diagnósticos independentes convergem:

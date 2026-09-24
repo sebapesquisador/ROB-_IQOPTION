@@ -585,3 +585,77 @@ class TestMarcaDaVarredura:
 
     def test_p_no_limite_nao_marca(self):
         assert self._marca(falta=+2.5, pv=0.00083) == ""
+
+
+class TestExposicao:
+    """Quanto tempo a estratégia realmente correu risco.
+
+    Sem esta medida, comparar com comprar e segurar engana: numa queda de
+    12%, uma estratégia que fica quase sempre em caixa "vence" o mercado
+    sem ter feito nada. Não é mérito, é ausência.
+    """
+
+    def test_posicao_em_metade_dos_candles(self, sinal_no_candle_5):
+        # 12 candles; entra no 6 e sai no 12 → ~6 barras seguradas.
+        rows = [(100, 100.1, 99.9, 100)] * 6 + [(100, 100.2, 99.9, 100)] * 6
+        bt = SpotBacktester(None, None, stop_loss_pct=50.0, take_profit_pct=50.0,
+                            fee_pct=0.0)
+        r = bt.run(candles(rows), "x")
+        assert r.trades, "o teste precisa de ao menos uma operação"
+        esperado = sum(t.bars_held for t in r.trades) / r.candles_tested * 100
+        assert r.exposicao_pct == pytest.approx(esperado)
+        assert 0 < r.exposicao_pct < 100
+
+    def test_sem_operacoes_exposicao_zero(self):
+        df = passeio_aleatorio(n=300, seed=21)
+        bt = SpotBacktester(StrategyConfig(name="rsi_reversal"), None)
+        r = bt.run(df, "rsi_reversal")
+        if r.stats.total_trades == 0:
+            assert r.exposicao_pct == 0.0
+
+    def test_nunca_passa_de_cem_por_cento(self):
+        df = passeio_aleatorio(n=2000, seed=22)
+        bt = SpotBacktester(StrategyConfig(name="confluence"), None,
+                            stop_loss_pct=90.0, take_profit_pct=90.0)
+        assert bt.run(df, "confluence").exposicao_pct <= 100.0
+
+    def test_barreiras_largas_expõem_mais_que_apertadas(self):
+        """Alvo distante = posição segurada por mais tempo."""
+        df = passeio_aleatorio(n=4000, seed=23)
+        cfg = StrategyConfig(name="trend_pullback")
+        apertada = SpotBacktester(cfg, None, stop_loss_pct=0.5,
+                                  take_profit_pct=0.5).run(df, "trend_pullback")
+        larga = SpotBacktester(cfg, None, stop_loss_pct=5.0,
+                               take_profit_pct=5.0).run(df, "trend_pullback")
+        assert larga.exposicao_pct > apertada.exposicao_pct
+
+    def test_aparece_no_dicionario(self):
+        df = passeio_aleatorio(n=1500, seed=24)
+        bt = SpotBacktester(StrategyConfig(name="macd_momentum"), None)
+        assert "exposicao_pct" in bt.run(df, "macd_momentum").to_dict()["summary"]
+
+
+class TestTradesParaSignificancia:
+    """Transforma "não deu" em algo acionável."""
+
+    def test_diferenca_grande_precisa_de_poucas(self):
+        from trading_bot.cli import _trades_para_significancia
+        assert _trades_para_significancia(0.60, 0.25) <= 100
+
+    def test_diferenca_minima_precisa_de_muitas(self):
+        from trading_bot.cli import _trades_para_significancia
+        poucas = _trades_para_significancia(0.40, 0.25)
+        muitas = _trades_para_significancia(0.27, 0.25)
+        assert muitas > poucas
+
+    def test_caso_real_do_relatorio(self):
+        """28,9% contra sorteio de 24,7%: o usuário tinha 114 operações."""
+        from trading_bot.cli import _trades_para_significancia
+        n = _trades_para_significancia(0.289, 0.247)
+        assert n is not None
+        assert 200 < n < 600, f"esperado algo na casa das centenas, veio {n}"
+
+    def test_sem_vantagem_nao_ha_resposta(self):
+        from trading_bot.cli import _trades_para_significancia
+        assert _trades_para_significancia(0.20, 0.25) is None
+        assert _trades_para_significancia(0.25, 0.25) is None
