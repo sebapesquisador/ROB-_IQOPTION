@@ -160,3 +160,67 @@ def rendimento_carry(funding: pd.DataFrame) -> dict:
         "maior_pct": round(float(taxas.max()) * 100, 4),
         "menor_pct": round(float(taxas.min()) * 100, 4),
     }
+
+
+# Taxas padrão da Binance para quem não tem volume nem desconto (VIP 0).
+TAXA_SPOT_PCT = 0.10          # compra e venda no mercado à vista
+TAXA_PERP_PCT = 0.05          # abertura e fechamento no perpétuo (taker)
+
+
+def carrego_liquido(funding: pd.DataFrame, *, taxa_spot_pct: float = TAXA_SPOT_PCT,
+                    taxa_perp_pct: float = TAXA_PERP_PCT,
+                    alavancagem: float = 5.0,
+                    dias_posicao: float = 365.0,
+                    referencia_anual_pct: float = 4.0) -> dict:
+    """O que sobra do carrego depois de custo e de capital imobilizado.
+
+    O rendimento bruto engana de duas formas, e as duas puxam para baixo:
+
+    1. **Custo de montagem.** São quatro ordens, não uma: compra do spot,
+       abertura do short no perpétuo, e depois o desmonte das duas. A
+       0,10% no spot e 0,05% no perpétuo, são 0,30% do valor da posição só
+       para entrar e sair.
+
+    2. **Capital imobilizado.** O rendimento é calculado sobre o valor da
+       posição, mas para montá-la é preciso o dinheiro do spot INTEIRO mais
+       a margem do short. Com 5x de alavancagem no perpétuo, são 1,20 de
+       capital para cada 1,00 de posição — o retorno sobre o que você
+       realmente empatou é menor na mesma proporção.
+
+    E há o que não cabe em conta nenhuma: se o preço subir forte, a margem
+    do short pode ser liquidada antes que o lucro do spot ajude, porque as
+    duas pernas vivem em contas separadas.
+    """
+    base = rendimento_carry(funding)
+    if not base:
+        return {}
+
+    bruto_anual = base["anualizado_pct"]
+
+    # Quatro ordens: entra e sai das duas pernas.
+    custo_montagem = 2 * taxa_spot_pct + 2 * taxa_perp_pct
+    # Diluído no tempo em que a posição fica de pé.
+    custo_anualizado = custo_montagem * (365.0 / max(dias_posicao, 1.0))
+
+    capital_por_posicao = 1.0 + (1.0 / max(alavancagem, 0.01))
+    liquido_sobre_posicao = bruto_anual - custo_anualizado
+    liquido_sobre_capital = liquido_sobre_posicao / capital_por_posicao
+
+    # Quantos dias de funding o custo de montagem consome.
+    por_dia = bruto_anual / 365.0
+    dias_para_pagar = (custo_montagem / por_dia) if por_dia > 0 else None
+
+    return {
+        **base,
+        "bruto_anual_pct": bruto_anual,
+        "custo_montagem_pct": round(custo_montagem, 4),
+        "custo_anualizado_pct": round(custo_anualizado, 3),
+        "capital_por_posicao": round(capital_por_posicao, 2),
+        "liquido_sobre_capital_pct": round(liquido_sobre_capital, 2),
+        "dias_para_pagar_custo": (round(dias_para_pagar, 1)
+                                  if dias_para_pagar is not None else None),
+        "referencia_anual_pct": referencia_anual_pct,
+        "excesso_sobre_referencia_pp": round(
+            liquido_sobre_capital - referencia_anual_pct, 2),
+        "preco_de_liquidacao_pct": round(100.0 / max(alavancagem, 0.01), 1),
+    }

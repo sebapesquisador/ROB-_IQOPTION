@@ -279,3 +279,72 @@ class TestHoldout:
         r_te = fs.teste_permutacao(teste, permutacoes=1000, seed=2)
         assert r_tr["p_value"] < 0.05, "o efeito plantado deveria aparecer"
         assert r_te["p_value"] > 0.05, "e desaparecer onde não foi plantado"
+
+
+class TestCarregoLiquido:
+    """Do rendimento bruto ao que sobra de verdade.
+
+    O bruto engana de duas formas e as duas puxam para baixo: são quatro
+    ordens para montar e desmontar, e o capital empatado é maior que a
+    posição (spot inteiro mais a margem do short).
+    """
+
+    def _df(self, taxa=0.0000361, n=500):
+        return pd.DataFrame({
+            "timestamp": pd.date_range(T0, periods=n, freq="8h", tz="UTC"),
+            "rate": [taxa] * n,
+        })
+
+    def test_custo_de_montagem_sao_quatro_ordens(self):
+        from trading_bot.data.funding import carrego_liquido
+        r = carrego_liquido(self._df(), taxa_spot_pct=0.1, taxa_perp_pct=0.05)
+        # 2 x 0,10 (spot) + 2 x 0,05 (perpétuo)
+        assert r["custo_montagem_pct"] == pytest.approx(0.30)
+
+    def test_posicao_curta_dilui_pior_o_custo(self):
+        from trading_bot.data.funding import carrego_liquido
+        curta = carrego_liquido(self._df(), dias_posicao=30)
+        longa = carrego_liquido(self._df(), dias_posicao=365)
+        assert curta["custo_anualizado_pct"] > longa["custo_anualizado_pct"]
+        assert curta["liquido_sobre_capital_pct"] < longa["liquido_sobre_capital_pct"]
+
+    def test_capital_inclui_a_margem_do_short(self):
+        from trading_bot.data.funding import carrego_liquido
+        r = carrego_liquido(self._df(), alavancagem=5.0)
+        assert r["capital_por_posicao"] == pytest.approx(1.2)
+        r10 = carrego_liquido(self._df(), alavancagem=10.0)
+        assert r10["capital_por_posicao"] == pytest.approx(1.1)
+        # Menos capital empatado => retorno sobre capital maior...
+        assert r10["liquido_sobre_capital_pct"] > r["liquido_sobre_capital_pct"]
+        # ...e liquidação mais perto.
+        assert r10["preco_de_liquidacao_pct"] < r["preco_de_liquidacao_pct"]
+
+    def test_reproduz_o_caso_real(self):
+        """+3,95% bruto vira +3,04% líquido — abaixo dos 4% sem risco."""
+        from trading_bot.data.funding import carrego_liquido
+        r = carrego_liquido(self._df(), dias_posicao=365, referencia_anual_pct=4.0)
+        assert r["bruto_anual_pct"] == pytest.approx(3.95, abs=0.02)
+        assert r["liquido_sobre_capital_pct"] == pytest.approx(3.04, abs=0.02)
+        assert r["excesso_sobre_referencia_pp"] < 0
+
+    def test_dias_para_pagar_a_montagem(self):
+        from trading_bot.data.funding import carrego_liquido
+        r = carrego_liquido(self._df())
+        # 0,30% de custo contra 3,95%/ano = ~0,0108%/dia
+        assert r["dias_para_pagar_custo"] == pytest.approx(27.7, abs=0.5)
+
+    def test_funding_negativo_nao_gera_dias_para_pagar(self):
+        from trading_bot.data.funding import carrego_liquido
+        r = carrego_liquido(self._df(taxa=-0.0001))
+        assert r["liquido_sobre_capital_pct"] < 0
+        assert r["dias_para_pagar_custo"] is None
+
+    def test_funding_alto_supera_a_referencia(self):
+        from trading_bot.data.funding import carrego_liquido
+        # 0,01% por período = ~11%/ano bruto
+        r = carrego_liquido(self._df(taxa=0.0001), referencia_anual_pct=4.0)
+        assert r["excesso_sobre_referencia_pp"] > 0
+
+    def test_vazio_nao_quebra(self):
+        from trading_bot.data.funding import carrego_liquido
+        assert carrego_liquido(pd.DataFrame()) == {}

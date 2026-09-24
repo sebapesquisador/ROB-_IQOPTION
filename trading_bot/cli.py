@@ -988,7 +988,7 @@ def cmd_funding(args) -> int:
     from .backtest.funding_signal import (alinhar, dividir, por_quantil,
                                           teste_permutacao)
     from .brokers import create_broker
-    from .data.funding import baixar_funding, rendimento_carry
+    from .data.funding import baixar_funding, carrego_liquido
 
     settings = get_settings()
     symbol = (args.symbol or settings.symbol).upper()
@@ -1027,21 +1027,48 @@ def cmd_funding(args) -> int:
         return 1
 
     # ---------------- carrego: aritmética, não previsão ----------------
-    carry = rendimento_carry(funding)
+    carry = carrego_liquido(
+        funding, taxa_spot_pct=args.taxa_spot, taxa_perp_pct=args.taxa_perp,
+        alavancagem=args.alavancagem, dias_posicao=args.dias_posicao,
+        referencia_anual_pct=args.referencia)
     print("\n" + "=" * 92)
-    print(f"  FUNDING DE {symbol} — {carry['periodos']} pagamentos, "
+    print(f"  CARREGO DE {symbol} — {carry['periodos']} pagamentos, "
           f"{carry['dias']:.0f} dias")
     print("=" * 92)
     print(f"  média por período (8h)    {carry['media_por_periodo_pct']:+.5f}%")
     print(f"  acumulado no período      {carry['acumulado_pct']:+.2f}%")
-    print(f"  equivalente anual         {carry['anualizado_pct']:+.2f}%")
     print(f"  períodos positivos        {carry['positivos_pct']:.1f}%")
     print(f"  extremos                  {carry['menor_pct']:+.4f}% a "
           f"{carry['maior_pct']:+.4f}%")
-    print("\n  Isto NÃO é previsão: é uma taxa observada. Quem vende o perpétuo")
-    print("  e compra o spot na mesma quantidade fica neutro em preço e recebe")
-    print("  esse valor. Os riscos ficam fora desta conta (liquidação, execução,")
-    print("  corretora) — mas a taxa em si não depende de acertar direção.")
+    print("\n  Do bruto ao que sobra:")
+    print(f"    (+) rendimento bruto anual              "
+          f"{carry['bruto_anual_pct']:>+8.2f}%")
+    print(f"    (-) custo de montagem, {carry['custo_montagem_pct']:.2f}% "
+          f"diluído em {args.dias_posicao:.0f} dias  "
+          f"{-carry['custo_anualizado_pct']:>+8.2f}%")
+    print(f"    (/) capital de {carry['capital_por_posicao']}x "
+          f"(spot inteiro + margem {args.alavancagem:.0f}x)")
+    print(f"    {'=' * 44}")
+    print(f"    (=) LÍQUIDO SOBRE O CAPITAL EMPATADO     "
+          f"{carry['liquido_sobre_capital_pct']:>+8.2f}%")
+    print(f"\n    referência sem risco ({args.referencia:.1f}%/ano)       "
+          f"{carry['excesso_sobre_referencia_pp']:>+8.2f}pp de diferença")
+
+    if carry["dias_para_pagar_custo"]:
+        print(f"\n  São quatro ordens, não uma: comprar spot, vender perpétuo, e")
+        print(f"  desmontar as duas. O funding de "
+              f"{carry['dias_para_pagar_custo']:.0f} dias vai só para pagá-las.")
+    if carry["excesso_sobre_referencia_pp"] < 0:
+        print(f"\n  ⚠ Rende MENOS que a referência sem risco, e com risco de")
+        print(f"    liquidação, de execução e de corretora. Não compensa.")
+    else:
+        print(f"\n  Rende acima da referência — mas ela não tem risco de")
+        print(f"    liquidação. Uma alta de {carry['preco_de_liquidacao_pct']:.0f}% "
+              f"liquida a margem do short antes que")
+        print(f"    o lucro do spot ajude: as duas pernas vivem em contas separadas.")
+    print("\n  Isto NÃO é previsão: é uma taxa observada, e não depende de")
+    print("  acertar direção. Por isso a conta acima é aritmética — o que pode")
+    print("  falhar é a execução, não a estatística.")
 
     # ---------------- sinal: precisa passar no teste ----------------
     print("\n" + "=" * 92)
@@ -1239,6 +1266,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_fund.add_argument("--permutacoes", type=int, default=5000)
     p_fund.add_argument("--holdout-split", type=float, default=0.3,
                         help="fração final reservada para teste")
+    p_fund.add_argument("--taxa-spot", type=float, default=0.10,
+                        help="taxa por ordem no spot (%%)")
+    p_fund.add_argument("--taxa-perp", type=float, default=0.05,
+                        help="taxa por ordem no perpétuo (%%)")
+    p_fund.add_argument("--alavancagem", type=float, default=5.0,
+                        help="alavancagem da perna vendida; define a margem")
+    p_fund.add_argument("--dias-posicao", type=float, default=365.0,
+                        help="por quantos dias a posição ficaria montada")
+    p_fund.add_argument("--referencia", type=float, default=4.0,
+                        help="rendimento anual sem risco para comparar (%%)")
     p_fund.set_defaults(func=cmd_funding)
 
     sub.add_parser("validate", help="valida a configuração").set_defaults(func=cmd_validate)
