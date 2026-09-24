@@ -975,6 +975,136 @@ def _varredura_barreiras(bt, df, names, symbol, args) -> int:
     return 0
 
 
+def cmd_funding(args) -> int:
+    """Testa se o funding rate prevê o retorno seguinte do spot.
+
+    Primeiro teste do projeto com um dado que NÃO é o preço. As cinco
+    estratégias anteriores liam só a cotação e todas empataram com sorteio,
+    o que era previsível: indicador calculado sobre o preço é função do que
+    todo mundo já vê. O funding é um pagamento real entre participantes, e
+    mede posicionamento — pode não prever nada, mas ao menos não é
+    tautológico.
+    """
+    from .backtest.funding_signal import (alinhar, dividir, por_quantil,
+                                          teste_permutacao)
+    from .brokers import create_broker
+    from .data.funding import baixar_funding, rendimento_carry
+
+    settings = get_settings()
+    symbol = (args.symbol or settings.symbol).upper()
+    tf = args.timeframe or settings.timeframe_minutes
+
+    print(f"\nBaixando {args.periodos} pagamentos de funding de {symbol}...")
+    try:
+        funding = baixar_funding(symbol, args.periodos)
+    except Exception as exc:
+        print(f"\n✖ {exc}\n")
+        return 1
+    dias = len(funding) * 8 / 24
+    print(f"Recebidos: {len(funding)} pagamentos "
+          f"({funding['timestamp'].iloc[0]:%Y-%m-%d} → "
+          f"{funding['timestamp'].iloc[-1]:%Y-%m-%d}, {dias:.0f} dias)")
+
+    # Candles suficientes para cobrir o mesmo período, com folga.
+    candles_necessarios = int(dias * 24 * 60 / tf) + 200
+    print(f"Baixando {candles_necessarios} candles de {tf} min...")
+    broker = create_broker(settings)
+    if not broker.connect():
+        print("\n✖ Não foi possível conectar para obter os candles.\n")
+        return 1
+    try:
+        candles = broker.get_candles(symbol, tf, candles_necessarios)
+    except Exception as exc:
+        print(f"\n✖ Não foi possível obter candles: {exc}\n")
+        return 1
+    finally:
+        broker.disconnect()
+
+    dados = alinhar(funding, candles, args.horizonte)
+    if len(dados) < 40:
+        print(f"\n✖ Só {len(dados)} eventos puderam ser alinhados — "
+              f"insuficiente.\n")
+        return 1
+
+    # ---------------- carrego: aritmética, não previsão ----------------
+    carry = rendimento_carry(funding)
+    print("\n" + "=" * 92)
+    print(f"  FUNDING DE {symbol} — {carry['periodos']} pagamentos, "
+          f"{carry['dias']:.0f} dias")
+    print("=" * 92)
+    print(f"  média por período (8h)    {carry['media_por_periodo_pct']:+.5f}%")
+    print(f"  acumulado no período      {carry['acumulado_pct']:+.2f}%")
+    print(f"  equivalente anual         {carry['anualizado_pct']:+.2f}%")
+    print(f"  períodos positivos        {carry['positivos_pct']:.1f}%")
+    print(f"  extremos                  {carry['menor_pct']:+.4f}% a "
+          f"{carry['maior_pct']:+.4f}%")
+    print("\n  Isto NÃO é previsão: é uma taxa observada. Quem vende o perpétuo")
+    print("  e compra o spot na mesma quantidade fica neutro em preço e recebe")
+    print("  esse valor. Os riscos ficam fora desta conta (liquidação, execução,")
+    print("  corretora) — mas a taxa em si não depende de acertar direção.")
+
+    # ---------------- sinal: precisa passar no teste ----------------
+    print("\n" + "=" * 92)
+    print(f"  O FUNDING PREVÊ O RETORNO DAS PRÓXIMAS {args.horizonte}h?")
+    print(f"  {len(dados)} eventos alinhados | entrada no candle seguinte ao "
+          f"pagamento")
+    print("=" * 92)
+    print(f"  {'grupo':>6}{'n':>7}{'funding médio':>16}{'retorno médio':>16}"
+          f"{'subiu':>9}")
+    print("-" * 92)
+    for g in por_quantil(dados, args.grupos):
+        print(f"  {g['grupo']:>6}{g['n']:>7}{g['funding_medio_pct']:>15.5f}%"
+              f"{g['retorno_medio_pct']:>15.4f}%{g['acerto_alta_pct']:>8.1f}%")
+    print("-" * 92)
+
+    treino, teste = dividir(dados, args.holdout_split)
+    r_treino = teste_permutacao(treino, args.grupos, args.permutacoes, seed=1)
+    r_teste = teste_permutacao(teste, args.grupos, args.permutacoes, seed=2)
+
+    if not r_treino or not r_teste:
+        print("\n  Amostra insuficiente para separar treino e teste.\n")
+        return 1
+
+    print(f"\n  Spread = retorno do grupo de funding MAIS BAIXO menos o do "
+          f"MAIS ALTO.")
+    print(f"  A hipótese contrária prevê spread positivo.\n")
+    print(f"  {'fatia':<10}{'eventos':>9}{'spread':>11}{'p-valor':>10}")
+    print(f"  {'treino':<10}{r_treino['n']:>9}{r_treino['spread_pct']:>+10.4f}%"
+          f"{r_treino['p_value']:>10.4f}")
+    print(f"  {'teste':<10}{r_teste['n']:>9}{r_teste['spread_pct']:>+10.4f}%"
+          f"{r_teste['p_value']:>10.4f}   ← nunca usado para escolher nada")
+
+    print("\n" + "=" * 92)
+    if r_teste["p_value"] < 0.05 and r_teste["spread_pct"] > 0:
+        print("  SOBREVIVEU AO TESTE FORA DA AMOSTRA")
+        print(f"  Spread de {r_teste['spread_pct']:+.4f}% com p={r_teste['p_value']:.4f}.")
+        print("  Próximo passo: verificar se o tamanho paga o custo. Um spread")
+        print("  menor que 0,2% (ida e volta na taxa) não vira lucro.")
+    elif r_treino["p_value"] < 0.05:
+        print("  NÃO CONFIRMADO FORA DA AMOSTRA")
+        print(f"  Apareceu no treino (p={r_treino['p_value']:.4f}) e sumiu no "
+              f"teste (p={r_teste['p_value']:.4f}).")
+        print("  É o padrão de quem encontrou uma coincidência, não um efeito.")
+    else:
+        print("  SEM EFEITO DETECTÁVEL")
+        print(f"  Nem no treino (p={r_treino['p_value']:.4f}) nem no teste "
+              f"(p={r_teste['p_value']:.4f}).")
+        print("  O funding não antecipa o retorno deste horizonte.")
+    print("=" * 92)
+
+    if args.horizonte > 8:
+        print(f"\n  ⚠ Horizonte de {args.horizonte}h é maior que o intervalo "
+              f"entre pagamentos (8h):")
+        print(f"    janelas consecutivas se sobrepõem e as observações não são")
+        print(f"    independentes. O teste de permutação sofre menos com isso que")
+        print(f"    um teste clássico, mas o p-valor ainda fica otimista.")
+
+    print(f"\n  Repare na diferença entre as duas metades do relatório: o")
+    print(f"  carrego é uma taxa que existe independentemente de previsão; o")
+    print(f"  sinal precisa passar num teste. Só a segunda parte pode falhar.\n")
+    return 0
+
+
 def cmd_validate(args) -> int:
     try:
         settings = get_settings(reload=True)
@@ -1095,6 +1225,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_spot.add_argument("--balance", type=float, default=1000.0)
     p_spot.add_argument("--min-confidence", type=float, default=0.55)
     p_spot.set_defaults(func=cmd_backtest_spot)
+
+    p_fund = sub.add_parser(
+        "funding", help="testa se o funding rate prevê o retorno do spot")
+    p_fund.add_argument("--symbol", help="par de perpétuo, ex.: BTCUSDT")
+    p_fund.add_argument("--periodos", type=int, default=1000,
+                        help="pagamentos de funding (8h cada; 1000 ≈ 333 dias)")
+    p_fund.add_argument("--horizonte", type=int, default=8,
+                        help="horas de retorno medidas após cada pagamento")
+    p_fund.add_argument("--timeframe", type=int, default=None)
+    p_fund.add_argument("--grupos", type=int, default=5,
+                        help="quantis de funding (5 = quintis)")
+    p_fund.add_argument("--permutacoes", type=int, default=5000)
+    p_fund.add_argument("--holdout-split", type=float, default=0.3,
+                        help="fração final reservada para teste")
+    p_fund.set_defaults(func=cmd_funding)
 
     sub.add_parser("validate", help="valida a configuração").set_defaults(func=cmd_validate)
     sub.add_parser("strategies", help="lista as estratégias").set_defaults(func=cmd_strategies)

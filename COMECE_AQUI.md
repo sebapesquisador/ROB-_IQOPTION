@@ -232,6 +232,43 @@ entrada prever algo.
 
 Leva alguns minutos com 30 mil candles.
 
+### Caminho 3: dados que não são o preço (funding rate)
+
+As cinco estratégias liam só a cotação e todas empataram com sorteio. Era
+previsível: RSI, MACD e Bollinger são funções públicas do mesmo histórico
+que todo mundo vê. Se previssem o próximo movimento, a previsão já estaria
+no preço.
+
+O **funding rate** é diferente em espécie. Não é calculado do preço — é um
+pagamento real entre participantes, a cada 8 horas, que mantém o contrato
+perpétuo colado no spot. Quando positivo, quem está comprado paga a quem
+está vendido. É uma medida de **posicionamento**, não de histórico.
+
+```powershell
+python -m trading_bot.cli funding --symbol BTCUSDT --periodos 1000
+```
+
+Dado público, sem chave. 1000 pagamentos ≈ 333 dias.
+
+O relatório tem duas metades, e a diferença entre elas é o ponto:
+
+| metade | o que é | pode falhar? |
+|---|---|---|
+| **carrego** | taxa observada; vender perpétuo e comprar spot fica neutro em preço e recebe funding | não — é aritmética |
+| **sinal** | funding alto prevê queda? | sim — precisa passar no teste |
+
+O teste do sinal separa os eventos em quintis de funding, mede o retorno
+seguinte de cada grupo e usa **teste de permutação**: embaralha qual
+retorno pertence a qual funding milhares de vezes para ver com que
+frequência o acaso produz a diferença observada. Com `--holdout-split`, a
+fatia final nunca participa de escolha nenhuma.
+
+Calibração verificada em dados sintéticos: 1 falso positivo em 20 amostras
+sem efeito (esperado a 5%), e detecção consistente de efeitos plantados.
+
+Opções úteis: `--horizonte 24` (mede retorno de 24h em vez de 8h),
+`--grupos 3`, `--permutacoes 10000`.
+
 ### Duas armadilhas que o relatório agora evita
 
 **1. "Ganhar do sorteio" não é lucro.** A varredura mostra a coluna
