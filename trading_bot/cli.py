@@ -34,6 +34,37 @@ _SUBSTITUTOS = {
 }
 
 
+def _codificacao_do_console() -> "str | None":
+    """Página de código que o console do Windows usa para LER a saída.
+
+    O detalhe que a primeira correção errou: quando a saída é
+    redirecionada, o Python escolhe a codificação ANSI do sistema (cp1252),
+    mas o PowerShell decodifica os bytes com a página de código do console,
+    que é OEM (cp850 no Brasil). As duas diferem justamente nos acentos, e
+    "estratégia" chega como "estratÚgia".
+
+    Escrever em UTF-8 não resolveria: o PowerShell continuaria lendo como
+    cp850. A única saída que casa é escrever na codificação que ele lê.
+    """
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import ctypes
+        cp = int(ctypes.windll.kernel32.GetConsoleOutputCP())
+    except Exception:
+        return None
+    if cp <= 0:
+        return None
+    if cp == 65001:
+        return "utf-8"
+    codec = f"cp{cp}"
+    try:
+        "teste".encode(codec)
+    except LookupError:
+        return None
+    return codec
+
+
 def _ajustar_saida_para_o_terminal() -> None:
     """Impede que um símbolo derrube o programa em terminais antigos.
 
@@ -43,13 +74,29 @@ def _ajustar_saida_para_o_terminal() -> None:
     UnicodeEncodeError, e o tratador de erro derruba de novo ao tentar
     imprimir o próprio aviso de falha.
 
-    Forçar UTF-8 resolveria o travamento e criaria outro problema: o
-    PowerShell leria os bytes como cp1252 e encheria o texto em português
-    de "Ã§". Como os acentos EXISTEM na cp1252 e só os símbolos decorativos
-    faltam, a saída correta é manter a codificação do terminal e trocar
-    apenas o que não cabe nela.
+    Duas correções, nesta ordem:
+
+    1. Escrever na codificação que o console REALMENTE lê (ver
+       _codificacao_do_console). Sem isso não há travamento, mas os acentos
+       chegam trocados.
+    2. Trocar os símbolos que não existem nessa codificação. Os acentos
+       cabem em cp850 e cp1252; a seta e o "✔" não.
+
+    Forçar UTF-8 seria a correção intuitiva e estaria errada: o PowerShell
+    decodifica com a página de código do console de qualquer jeito, e todo
+    o texto em português viraria ruído.
     """
+    console = _codificacao_do_console()
     for stream in (sys.stdout, sys.stderr):
+        # Só interfere quando a saída é redirecionada: no console de verdade
+        # o Python já conversa em Unicode com o Windows e está tudo certo.
+        redirecionada = not getattr(stream, "isatty", lambda: False)()
+        if console and redirecionada:
+            try:
+                stream.reconfigure(encoding=console, errors="replace")
+            except Exception:
+                pass
+
         codificacao = getattr(stream, "encoding", None) or "utf-8"
         try:
             "".join(_SUBSTITUTOS).encode(codificacao)
@@ -754,6 +801,7 @@ def _varredura_barreiras(bt, df, names, symbol, args) -> int:
         (3.0, 3.0), (3.0, 9.0), (4.0, 12.0),
     ]
     SEEDS = 5
+    MIN_TRADES_CONFIAVEL = 100
 
     print(f"\nCalculando sinais de {len(names)} estratégias "
           f"(uma vez só, reaproveitados em {len(grade)} combinações)...")
@@ -821,11 +869,16 @@ def _varredura_barreiras(bt, df, names, symbol, args) -> int:
         falta = acerto - be
         pv = p_binomial_cauda(wins, n, nulo)
         diferencas.append(dif)
-        faltas.append(falta)
+        # Só entra na leitura final quem tem amostra para significar algo.
+        if n >= MIN_TRADES_CONFIAVEL:
+            faltas.append((falta, n, stop, alvo))
         if pv < alpha and falta > 0:
             achados.append((stop, alvo, nome, falta, pv))
 
-        marca = "  <<" if falta > 0 else ""
+        # A marca exige os DOIS critérios. Marcar só por `falta` positiva
+        # destacaria linhas de 30 operações com p de 0,5 — foi o que a
+        # primeira versão fez, apontando ruído como se fosse achado.
+        marca = "  <<" if (falta > 0 and pv < alpha) else ""
         print(f"  {stop:>5.1f}{alvo:>6.1f}{be:>8.1f}%   {nome:<21}{n:>6}"
               f"{acerto:>7.1f}%{sorteio:>8.1f}%{dif:>+9.1f}pp{falta:>+8.1f}pp"
               f"{pv:>9.3f}{marca}")
@@ -833,11 +886,19 @@ def _varredura_barreiras(bt, df, names, symbol, args) -> int:
     print("=" * 112)
     if diferencas:
         media = sum(diferencas) / len(diferencas)
-        melhor_falta = max(faltas)
         print(f"\n  Ganha do sorteio, em média: {media:+.1f}pp — "
               f"mas o que paga conta é a coluna 'falta'.")
-        print(f"  Melhor distância até o lucro: {melhor_falta:+.1f}pp "
-              f"(negativo = ainda no prejuízo).")
+        if faltas:
+            melhor_falta, n_melhor, s_melhor, a_melhor = max(faltas)
+            print(f"  Melhor distância até o lucro, entre as linhas com pelo "
+                  f"menos {MIN_TRADES_CONFIAVEL}\n  operações: "
+                  f"{melhor_falta:+.1f}pp (stop {s_melhor}% / alvo {a_melhor}%, "
+                  f"{n_melhor} operações).")
+        else:
+            melhor_falta = -99.0
+            print(f"  Nenhuma linha chegou a {MIN_TRADES_CONFIAVEL} operações: "
+                  f"não há o que concluir de\n  nenhuma delas, por melhor que "
+                  f"a coluna 'falta' pareça.")
 
         if achados:
             print("\n  Combinações que passaram nos dois critérios "
@@ -850,15 +911,21 @@ def _varredura_barreiras(bt, df, names, symbol, args) -> int:
                   "sorte, e a correção de Bonferroni não\n  desfaz isso "
                   "completamente.")
         elif melhor_falta > -2.0:
-            print("\n  Nenhuma combinação fecha no azul, mas a melhor chegou perto.")
-            print("  Repare que a coluna 'falta' encolhe conforme as barreiras")
-            print("  aumentam: a taxa é um custo fixo em %, então quanto maior o")
-            print("  movimento buscado, menos ela pesa. Vale testar barreiras ainda")
-            print("  mais largas e uma taxa menor (--fee 0.075 com desconto BNB).")
+            print("\n  Nenhuma combinação fecha no azul, mas a melhor chegou perto,")
+            print("  e com amostra suficiente para não ser só ruído. A coluna")
+            print("  'falta' encolhe conforme as barreiras aumentam: a taxa é um")
+            print("  custo fixo em %, então quanto maior o movimento buscado, menos")
+            print("  ela pesa. Vale testar uma taxa menor (--fee 0.075, desconto")
+            print("  BNB) antes de desistir.")
         else:
             print("\n  Nenhuma combinação chega ao equilíbrio. O stop e o alvo")
             print("  decidem QUANTAS operações ganham, não SE há o que ganhar.")
-    print("\n  << marca as linhas em que o acerto supera o equilíbrio líquido.\n")
+            print("  Barreiras mais largas reduzem o peso da taxa, mas também")
+            print("  reduzem o número de operações: o que parece melhora costuma")
+            print("  ser só a amostra encolhendo.")
+    print(f"\n  << marca as linhas lucrativas E significativas (falta > 0 e "
+          f"p < {alpha:.4f}).\n  Uma coisa sem a outra não vale: no ruído puro "
+          f"aparecem linhas com\n  'falta' de +8pp e p de 0,3.\n")
     return 0
 
 

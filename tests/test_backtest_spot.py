@@ -559,3 +559,29 @@ class TestPBinomial:
     def test_bordas_devolvem_um(self, k, n, p):
         from trading_bot.backtest.spot import p_binomial_cauda
         assert p_binomial_cauda(k, n, p) == 1.0
+
+
+class TestMarcaDaVarredura:
+    """A marca << não pode destacar ruído.
+
+    Na varredura real do usuário, a linha 4.0/12.0 tinha 30 operações,
+    p=0,519 e perdia do sorteio — e mesmo assim ganhou a marca, porque o
+    código exigia só `falta > 0`. Era o erro que o próprio relatório
+    mandava evitar.
+    """
+
+    def _marca(self, falta, pv, alpha=0.00083):
+        return "  <<" if (falta > 0 and pv < alpha) else ""
+
+    def test_falta_positiva_sozinha_nao_marca(self):
+        assert self._marca(falta=+0.4, pv=0.519) == ""
+
+    def test_p_baixo_sozinho_nao_marca(self):
+        # Significativamente pior que o equilíbrio continua sendo prejuízo.
+        assert self._marca(falta=-10.8, pv=0.0001) == ""
+
+    def test_os_dois_criterios_juntos_marcam(self):
+        assert self._marca(falta=+2.5, pv=0.0001) == "  <<"
+
+    def test_p_no_limite_nao_marca(self):
+        assert self._marca(falta=+2.5, pv=0.00083) == ""

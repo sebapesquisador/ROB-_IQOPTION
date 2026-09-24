@@ -106,3 +106,70 @@ class TestProgramaCompleto:
         r = self._rodar(["strategies"], codificacao)
         assert "UnicodeEncodeError" not in r.stderr
         assert "bollinger_reversion" in r.stdout
+
+
+class TestCodificacaoDoConsole:
+    """Descoberta da página de código que o console realmente usa.
+
+    A primeira correção não travava mais, mas entregava "estratÚgia": o
+    Python escrevia em cp1252 (ANSI do sistema) e o PowerShell lia em cp850
+    (OEM do console). As duas diferem exatamente nos acentos.
+    """
+
+    def test_fora_do_windows_nao_interfere(self, monkeypatch):
+        from trading_bot.cli import _codificacao_do_console
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert _codificacao_do_console() is None
+
+    def test_reproduz_o_erro_relatado(self):
+        """cp1252 escrito, cp850 lido: é assim que "é" vira "Ú"."""
+        assert "estratégia".encode("cp1252").decode("cp850") == "estratÚgia"
+        # Escrever na codificação certa resolve.
+        assert "estratégia".encode("cp850").decode("cp850") == "estratégia"
+
+    def test_utf8_nao_salvaria(self):
+        """Prova de que forçar UTF-8 seria a correção errada."""
+        bagunca = "estratégia".encode("utf-8").decode("cp850")
+        assert bagunca != "estratégia"
+
+    def test_windows_usa_a_pagina_do_console(self, monkeypatch):
+        from trading_bot import cli
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        class FakeKernel:
+            @staticmethod
+            def GetConsoleOutputCP():
+                return 850
+
+        fake = type("W", (), {"kernel32": FakeKernel})()
+        monkeypatch.setitem(sys.modules, "ctypes",
+                            type("C", (), {"windll": fake}))
+        assert cli._codificacao_do_console() == "cp850"
+
+    def test_console_em_utf8_e_reconhecido(self, monkeypatch):
+        from trading_bot import cli
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        class FakeKernel:
+            @staticmethod
+            def GetConsoleOutputCP():
+                return 65001
+
+        fake = type("W", (), {"kernel32": FakeKernel})()
+        monkeypatch.setitem(sys.modules, "ctypes",
+                            type("C", (), {"windll": fake}))
+        assert cli._codificacao_do_console() == "utf-8"
+
+    def test_pagina_desconhecida_nao_quebra(self, monkeypatch):
+        from trading_bot import cli
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        class FakeKernel:
+            @staticmethod
+            def GetConsoleOutputCP():
+                return 99999
+
+        fake = type("W", (), {"kernel32": FakeKernel})()
+        monkeypatch.setitem(sys.modules, "ctypes",
+                            type("C", (), {"windll": fake}))
+        assert cli._codificacao_do_console() is None
