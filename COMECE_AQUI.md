@@ -397,6 +397,67 @@ e negociação (Enable Reading + Enable Spot Trading).
 
 ---
 
+## Estratégia Williams %R (`wpr_extremes`)
+
+O Williams %R mede **onde o fechamento caiu dentro da faixa dos últimos N
+candles**. Vai de -100 (fechou na mínima da janela) a 0 (fechou na máxima).
+Perto de -100, quem vendia se esgotou; perto de 0, quem comprava.
+
+Diferente das outras cinco, esta estratégia **decide também a saída**. As
+outras só escolhem a entrada e deixam o stop ou o alvo fecharem a posição.
+
+### Os cinco números, no `.env`
+
+```
+STRAT_NAME=wpr_extremes
+STRAT_WPR_PERIOD=20       # tamanho da janela, em candles
+STRAT_WPR_BUY=-95         # entra COMPRADO abaixo disso
+STRAT_WPR_SELL=-5         # entra VENDIDO acima disso
+STRAT_WPR_EXIT_BUY=-20    # encerra a COMPRA acima disso
+STRAT_WPR_EXIT_SELL=-80   # encerra a VENDA abaixo disso
+```
+
+```
+ -100 ─────────────────────────────────────────────────── 0
+   │                                                      │
+   └── COMPRA (-95)          sai da compra (-20) ──┐      │
+       sai da venda (-80) ──────────────┘          └── VENDA (-5)
+```
+
+O robô **recusa iniciar** se os níveis não fizerem sentido (saída antes da
+entrada, zonas de compra e venda cruzadas) e diz qual variável corrigir.
+Níveis mais frouxos (-80 / -30) geram muito mais operações; mais apertados
+(-98 / -10), poucas e raras.
+
+### Testando
+
+```bash
+# Só a perna comprada (é o que a Binance spot permite de verdade)
+python -m trading_bot.cli backtest-spot --strategy wpr_extremes \
+  --symbol BTCUSDT --candles 30000 --timeframe 15 \
+  --stop 1.0 --target 3.0 --fee 0.1
+
+# Incluindo a perna vendida (exige margem na vida real)
+python -m trading_bot.cli backtest-spot --strategy wpr_extremes \
+  --symbol BTCUSDT --candles 30000 --timeframe 15 --allow-short
+```
+
+### Duas limitações que você precisa saber
+
+1. **`--allow-short` não simula o custo de aluguel.** Vender a descoberto
+   custa juros que este motor ignora. Serve para estudar o sinal, não para
+   prever o lucro.
+
+2. **Ao vivo, a saída do WPR não é executada.** A interface de corretora
+   deste projeto abre ordem com vencimento e espera o resultado — nenhuma
+   corretora aqui sabe encerrar posição antes da hora. Rodando ao vivo, as
+   *entradas* seguem a estratégia e as *saídas* não: é uma estratégia
+   diferente da que você testou. O robô grava um aviso no log e acende uma
+   bandeira no painel ao iniciar, justamente para isso não passar batido.
+   Enquanto essa peça não existir, trate o `wpr_extremes` como estratégia
+   **de backtest**.
+
+
 ## Comandos que você vai usar
 
 ```powershell

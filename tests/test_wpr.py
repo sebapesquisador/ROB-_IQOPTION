@@ -294,3 +294,75 @@ class TestSaidaNoBacktest:
                            fee_pct=0.0, max_bars=500).run(
                                candles(PERCURSO, folga=0.5), "wpr_extremes")
         assert any(t.reason == "stop" for t in r.trades)
+
+
+class TestPernaVendida:
+    """A especificação tem duas pernas; o spot é long-only por padrão."""
+
+    def _cfg(self):
+        return StrategyConfig(name="wpr_extremes", min_confidence=0.0,
+                              min_atr_pct=0.0, max_atr_pct=100.0)
+
+    def _percurso_invertido(self):
+        # Espelho do PERCURSO: sobe ao topo (venda) e depois desaba (saída).
+        return (LATERAL + list(np.linspace(100.5, 130, 25))
+                + list(np.linspace(130, 95, 40)))
+
+    def test_sem_allow_short_a_venda_e_ignorada(self):
+        r = SpotBacktester(self._cfg(), None, stop_loss_pct=50.0,
+                           take_profit_pct=50.0, fee_pct=0.0, max_bars=500).run(
+                               candles(self._percurso_invertido(), folga=0.2),
+                               "wpr_extremes")
+        assert all(t.direction != "SHORT" for t in r.trades)
+
+    def test_com_allow_short_a_venda_opera(self):
+        r = SpotBacktester(self._cfg(), None, stop_loss_pct=50.0,
+                           take_profit_pct=50.0, fee_pct=0.0, max_bars=500,
+                           allow_short=True).run(
+                               candles(self._percurso_invertido(), folga=0.2),
+                               "wpr_extremes")
+        vendas = [t for t in r.trades if t.direction == "SHORT"]
+        assert vendas, "a perna vendida precisa produzir operações"
+
+    def test_venda_tambem_fecha_pela_regra_da_estrategia(self):
+        r = SpotBacktester(self._cfg(), None, stop_loss_pct=50.0,
+                           take_profit_pct=50.0, fee_pct=0.0, max_bars=500,
+                           allow_short=True).run(
+                               candles(self._percurso_invertido(), folga=0.2),
+                               "wpr_extremes")
+        assert any(t.direction == "SHORT" and t.reason == "saída da estratégia"
+                   for t in r.trades)
+
+
+class TestAvisoDeSaidaAoVivo:
+    """O motor ao vivo não executa should_exit — isso não pode ficar mudo."""
+
+    def _engine(self, nome):
+        from unittest.mock import MagicMock
+        from trading_bot.core.engine import TradingEngine
+        from trading_bot.core.config import Settings
+
+        st = Settings(strategy=StrategyConfig(name=nome))
+        broker, storage = MagicMock(), MagicMock()
+        eng = TradingEngine.__new__(TradingEngine)
+        eng.settings, eng.broker, eng.storage = st, broker, storage
+        eng.strategy = get_strategy(nome, st.strategy)
+        return eng, storage
+
+    def test_estrategia_com_saida_propria_gera_aviso(self):
+        eng, storage = self._engine("wpr_extremes")
+        assert eng._avisar_sobre_saida_da_estrategia() is True
+        assert storage.log_event.called
+        nivel, origem = storage.log_event.call_args[0][0], storage.log_event.call_args[0][1]
+        assert nivel == "WARNING" and origem == "engine"
+
+    def test_estrategia_sem_saida_propria_nao_avisa(self):
+        eng, storage = self._engine("rsi_reversal")
+        assert eng._avisar_sobre_saida_da_estrategia() is False
+        assert not storage.log_event.called
+
+    def test_o_aviso_diz_o_que_diverge(self):
+        eng, storage = self._engine("wpr_extremes")
+        eng._avisar_sobre_saida_da_estrategia()
+        texto = storage.log_event.call_args[0][2]
+        assert "saída" in texto.lower()

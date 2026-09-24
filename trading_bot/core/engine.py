@@ -31,6 +31,7 @@ from .models import BotState, Direction, Order, OrderStatus, Signal
 from .risk import RejectReason, RiskManager
 from .storage import Storage
 from .strategies import get_strategy
+from .strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,10 @@ class TradingEngine:
         self._cycles = 0
         self._started_at: Optional[datetime] = None
         self._listeners: list[Callable[[str, dict], None]] = []
+        # Estratégia com saída própria rodando numa corretora que só fecha
+        # no vencimento. Vira bandeira no painel para o operador não
+        # confundir o que está rodando com o que foi testado.
+        self._saida_nao_executada = False
 
     # ------------------------------------------------------------------ #
     # Eventos
@@ -108,6 +113,7 @@ class TradingEngine:
             self._thread.start()
 
             self.storage.log_event("INFO", "lifecycle", "robô iniciado", self.settings.masked())
+            self._saida_nao_executada = self._avisar_sobre_saida_da_estrategia()
             logger.info("engine iniciado | %s | %s | saldo %.2f",
                         self.broker.name, self.strategy.name, balance)
             return True
@@ -166,6 +172,36 @@ class TradingEngine:
 
             elapsed = time.monotonic() - started
             self._stop_event.wait(max(0.5, self.settings.poll_interval_seconds - elapsed))
+
+    def _avisar_sobre_saida_da_estrategia(self) -> bool:
+        """A estratégia define saída própria que o motor ao vivo não executa?
+
+        No backtest, `should_exit` fecha a posição. Ao vivo não existe esse
+        caminho: a interface de corretora deste projeto abre ordem com
+        vencimento e espera o resultado — nenhuma corretora aqui sabe
+        encerrar uma posição antes da hora.
+
+        Rodar assim não é errado, mas é uma estratégia DIFERENTE da que foi
+        testada: as entradas são as mesmas, as saídas não. Isso precisa
+        aparecer no log e no painel, nunca passar despercebido — a diferença
+        entre backtest e operação real é exatamente onde o dinheiro some.
+        """
+        tipo = type(self.strategy)
+        if getattr(tipo, "should_exit", Strategy.should_exit) is Strategy.should_exit:
+            return False
+
+        aviso = (
+            f"A estratégia '{self.settings.strategy.name}' define regra de saída "
+            f"própria (should_exit), mas a corretora '{self.settings.broker}' só "
+            f"encerra posição no vencimento. As ENTRADAS seguem a estratégia; as "
+            f"SAÍDAS, não. O resultado ao vivo vai divergir do backtest."
+        )
+        logger.warning(aviso)
+        self.storage.log_event(
+            "WARNING", "engine", "saída da estratégia não é executada ao vivo",
+            {"strategy": self.settings.strategy.name, "broker": str(self.settings.broker)},
+        )
+        return True
 
     def _tick(self) -> None:
         self._cycles += 1
@@ -343,6 +379,7 @@ class TradingEngine:
             "uptime_seconds": int(uptime),
             "open_orders": len(self._open_orders),
             "last_error": self._last_error,
+            "saida_da_estrategia_nao_executada": self._saida_nao_executada,
             "last_signal": {
                 "direction": sig.direction.value,
                 "confidence": round(sig.confidence, 3),

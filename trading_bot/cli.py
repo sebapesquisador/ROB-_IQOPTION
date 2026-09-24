@@ -641,7 +641,12 @@ def cmd_backtest_spot(args) -> int:
         stop_loss_pct=args.stop, take_profit_pct=args.target,
         fee_pct=args.fee, slippage_pct=args.slippage,
         initial_balance=args.balance, max_bars=args.max_bars,
+        allow_short=args.allow_short,
     )
+    if args.allow_short:
+        print("⚠ Perna vendida HABILITADA. Na Binance spot vender a descoberto\n"
+              "  exige margem, com custo de empréstimo que este motor NÃO simula.\n"
+              "  Use para estudar o sinal, não como promessa de execução.\n")
     names = [args.strategy] if args.strategy else [s["name"] for s in available_strategies()]
     if args.sweep:
         return _varredura_barreiras(bt, df, names, symbol, args)
@@ -1241,6 +1246,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="alvo em %% do preço de entrada (padrão 1.5)")
     p_spot.add_argument("--sweep", action="store_true",
                         help="varre combinações de stop/alvo contra o sorteio")
+    p_spot.add_argument("--allow-short", action="store_true",
+                        help="permite operações vendidas (spot é long-only por padrão)")
     p_spot.add_argument("--no-baseline", action="store_true",
                         help="não calcular a referência de entradas aleatórias")
     p_spot.add_argument("--fee", type=float, default=0.1,
