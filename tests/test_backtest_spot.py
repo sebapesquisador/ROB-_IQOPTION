@@ -397,3 +397,90 @@ class TestReferenciaAleatoria:
         from trading_bot.core.strategies import get_strategy
         with pytest.raises(KeyError):
             get_strategy("aleatório", StrategyConfig(name="rsi_reversal"))
+
+
+class TestSinaisPreparados:
+    """Reuso de sinais entre combinações de barreiras.
+
+    Os sinais dependem do preço, não do stop nem do alvo. Calculá-los uma
+    vez e reaproveitá-los é o que torna a varredura viável — mas só vale se
+    o resultado for exatamente o mesmo do caminho direto.
+    """
+
+    @pytest.mark.parametrize("nome", [
+        "rsi_reversal", "macd_momentum", "bollinger_reversion",
+        "trend_pullback", "confluence",
+    ])
+    def test_caminho_rapido_da_resultado_identico(self, nome):
+        df = passeio_aleatorio(n=4000, seed=11)
+        bt = SpotBacktester(StrategyConfig(name=nome), None,
+                            stop_loss_pct=1.0, take_profit_pct=2.0, fee_pct=0.1)
+        direto = bt.run(df, nome)
+        rapido = bt.run(df, nome, preparado=bt.preparar(df, nome))
+
+        assert direto.stats.total_trades == rapido.stats.total_trades
+        assert direto.stats.wins == rapido.stats.wins
+        assert direto.stats.net_profit == pytest.approx(rapido.stats.net_profit, abs=1e-9)
+        # Não basta o agregado bater: as operações têm de ser as mesmas.
+        assert ([t.entry_time for t in direto.trades]
+                == [t.entry_time for t in rapido.trades])
+        assert ([t.exit_price for t in direto.trades]
+                == [t.exit_price for t in rapido.trades])
+
+    def test_mesmos_sinais_servem_a_barreiras_diferentes(self):
+        """O preparo não pode carregar nada específico de stop/alvo."""
+        df = passeio_aleatorio(n=4000, seed=12)
+        bt = SpotBacktester(StrategyConfig(name="trend_pullback"), None,
+                            stop_loss_pct=1.0, take_profit_pct=2.0)
+        prep = bt.preparar(df, "trend_pullback")
+        a = bt.run(df, "trend_pullback", preparado=prep)
+
+        bt.stop_loss_pct, bt.take_profit_pct = 0.5, 1.5
+        b = bt.run(df, "trend_pullback", preparado=prep)
+
+        # Barreiras mais apertadas fecham antes: as operações mudam.
+        assert a.stats.total_trades != b.stats.total_trades or \
+            a.stats.net_profit != b.stats.net_profit
+        # Mas a primeira entrada é a mesma: o sinal não mudou.
+        assert a.trades[0].entry_time == b.trades[0].entry_time
+
+    def test_densidade_de_sinais_entre_zero_e_um(self):
+        df = passeio_aleatorio(n=3000, seed=13)
+        bt = SpotBacktester(StrategyConfig(name="confluence"), None)
+        d = bt.densidade_de_sinais(bt.preparar(df, "confluence"))
+        assert 0.0 <= d <= 1.0
+
+    def test_preparo_aleatorio_respeita_a_probabilidade(self):
+        df = passeio_aleatorio(n=5000, seed=14)
+        bt = SpotBacktester(StrategyConfig(name="rsi_reversal"), None)
+        dados = bt.preparar(df, "rsi_reversal").data
+        prep = bt.preparar_aleatorio(dados, prob=0.1, seed=0)
+        marcas = sum(1 for m in prep.sinais if m is not None)
+        assert 0.08 < marcas / len(dados) < 0.12
+
+    def test_preparo_aleatorio_e_reprodutivel(self):
+        df = passeio_aleatorio(n=2000, seed=15)
+        bt = SpotBacktester(StrategyConfig(name="rsi_reversal"), None)
+        dados = bt.preparar(df, "rsi_reversal").data
+        a = bt.preparar_aleatorio(dados, 0.1, seed=4).sinais
+        b = bt.preparar_aleatorio(dados, 0.1, seed=4).sinais
+        c = bt.preparar_aleatorio(dados, 0.1, seed=5).sinais
+        assert a == b
+        assert a != c
+
+    def test_entradas_fixas_isolam_o_efeito_das_barreiras(self):
+        """Na varredura, só o stop e o alvo podem variar.
+
+        Se as entradas mudassem junto, não daria para atribuir a diferença
+        de resultado às barreiras.
+        """
+        df = passeio_aleatorio(n=4000, seed=16)
+        bt = SpotBacktester(StrategyConfig(name="rsi_reversal"), None,
+                            stop_loss_pct=1.0, take_profit_pct=2.0)
+        dados = bt.preparar(df, "rsi_reversal").data
+        prep = bt.preparar_aleatorio(dados, 0.02, seed=1)
+
+        primeira_a = bt.run(df, "aleatório", preparado=prep).trades[0].entry_time
+        bt.stop_loss_pct, bt.take_profit_pct = 2.0, 6.0
+        primeira_b = bt.run(df, "aleatório", preparado=prep).trades[0].entry_time
+        assert primeira_a == primeira_b

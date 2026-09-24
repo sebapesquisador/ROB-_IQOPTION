@@ -226,6 +226,15 @@ class SpotResult:
         }
 
 
+@dataclass(slots=True)
+class _Preparado:
+    """Candles enriquecidos e sinais já calculados, prontos para reuso."""
+    data: pd.DataFrame
+    sinais: list          # índice do candle -> True (long), False (short) ou None
+    warmup: int
+    strategy_name: str
+
+
 class _EntradaAleatoria:
     """Entra em candles sorteados, sem olhar para o preço.
 
@@ -288,13 +297,47 @@ class SpotBacktester:
         # Trava de tempo: evita capital preso indefinidamente numa posição.
         self.max_bars = max_bars
 
-    def run(self, candles: pd.DataFrame, strategy_name: str,
-            symbol: str = "BTCUSDT", strategy=None) -> SpotResult:
-        # `strategy` injetável para poder rodar a referência aleatória, que
-        # não está (nem deve estar) no registro de estratégias reais.
+    def preparar(self, candles: pd.DataFrame, strategy_name: str,
+                 strategy=None) -> "_Preparado":
+        """Enriquece os candles e calcula os sinais uma única vez.
+
+        Os sinais de uma estratégia não dependem de stop nem de alvo — só
+        do preço e dos indicadores. Varrer dez combinações de barreiras
+        recalculando tudo dez vezes custaria dez vezes mais por nada.
+
+        Diferença sutil em relação ao `run` direto: aqui a estratégia é
+        consultada em todos os candles, inclusive nos que ela passaria em
+        branco por haver posição aberta. Para estratégias determinísticas
+        (todas as reais) o resultado é idêntico; para a referência
+        aleatória mudaria a sequência sorteada, por isso ela não usa este
+        caminho.
+        """
         if strategy is None:
             strategy = get_strategy(strategy_name, self.strategy_config)
         data = indicators.enrich(candles, self.strategy_config).reset_index(drop=True)
+        warmup = strategy.required_candles()
+
+        sinais: list[Optional[bool]] = [None] * len(data)
+        for i in range(warmup, max(warmup, len(data) - 2)):
+            sig = strategy.evaluate(data.iloc[: i + 1])
+            if sig.is_actionable:
+                sinais[i] = sig.direction is Direction.CALL
+        return _Preparado(data=data, sinais=sinais, warmup=warmup,
+                          strategy_name=strategy_name)
+
+    def run(self, candles: pd.DataFrame, strategy_name: str,
+            symbol: str = "BTCUSDT", strategy=None,
+            preparado: "Optional[_Preparado]" = None) -> SpotResult:
+        # `strategy` injetável para poder rodar a referência aleatória, que
+        # não está (nem deve estar) no registro de estratégias reais.
+        # `preparado` reaproveita sinais já calculados (varredura de barreiras).
+        if preparado is not None:
+            strategy, data = None, preparado.data
+            strategy_name = strategy_name or preparado.strategy_name
+        else:
+            if strategy is None:
+                strategy = get_strategy(strategy_name, self.strategy_config)
+            data = indicators.enrich(candles, self.strategy_config).reset_index(drop=True)
 
         result = SpotResult(
             strategy=strategy_name, symbol=symbol,
@@ -303,7 +346,7 @@ class SpotBacktester:
             fee_pct=self.fee_pct, candles_tested=len(data),
         )
 
-        warmup = strategy.required_candles()
+        warmup = preparado.warmup if preparado is not None else strategy.required_candles()
         if len(data) <= warmup + 3:
             logger.warning("candles insuficientes para %s", strategy_name)
             return result
@@ -321,13 +364,18 @@ class SpotBacktester:
         i = warmup
 
         while i < len(data) - 2:
-            window = data.iloc[: i + 1]
-            signal = strategy.evaluate(window)
-            if not signal.is_actionable:
-                i += 1
-                continue
-
-            is_long = signal.direction is Direction.CALL
+            if preparado is not None:
+                marca = preparado.sinais[i]
+                if marca is None:
+                    i += 1
+                    continue
+                is_long = marca
+            else:
+                signal = strategy.evaluate(data.iloc[: i + 1])
+                if not signal.is_actionable:
+                    i += 1
+                    continue
+                is_long = signal.direction is Direction.CALL
             if not is_long and not self.allow_short:
                 i += 1
                 continue
@@ -443,6 +491,27 @@ class SpotBacktester:
                 logger.error("falha ao testar %s: %s", nome, exc)
                 saida.append({"strategy": nome, "error": str(exc)})
         return sorted(saida, key=lambda r: r.get("net_profit", float("-inf")), reverse=True)
+
+    def preparar_aleatorio(self, data: pd.DataFrame, prob: float,
+                           seed: int, warmup: int = 50) -> "_Preparado":
+        """Sinais sorteados sobre candles já enriquecidos.
+
+        Usado na varredura: fixar os pontos de entrada entre as
+        combinações de barreiras isola o efeito do stop e do alvo. Se as
+        entradas mudassem junto, não daria para saber o que causou o quê.
+        """
+        rng = random.Random(seed)
+        sinais: list[Optional[bool]] = [None] * len(data)
+        for i in range(warmup, max(warmup, len(data) - 2)):
+            if rng.random() < prob:
+                sinais[i] = True
+        return _Preparado(data=data, sinais=sinais, warmup=warmup,
+                          strategy_name="aleatório")
+
+    def densidade_de_sinais(self, preparado: "_Preparado") -> float:
+        """Fração de candles em que a estratégia quer entrar."""
+        marcas = sum(1 for m in preparado.sinais if m is not None)
+        return marcas / max(len(preparado.sinais), 1)
 
     def referencia_aleatoria(
         self, candles: pd.DataFrame, n_trades_alvo: int,

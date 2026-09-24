@@ -535,6 +535,9 @@ def cmd_backtest_spot(args) -> int:
         initial_balance=args.balance, max_bars=args.max_bars,
     )
     names = [args.strategy] if args.strategy else [s["name"] for s in available_strategies()]
+    if args.sweep:
+        return _varredura_barreiras(bt, df, names, symbol, args)
+
     results = bt.compare(df, names, symbol)
 
     from .backtest.spot import breakeven_liquido, payoff_liquido
@@ -637,6 +640,114 @@ def cmd_backtest_spot(args) -> int:
                   f"a busca é paginada, leva alguns segundos)")
 
     print("\n  Valide em conta demo por semanas antes de considerar dinheiro real.\n")
+    return 0
+
+
+def _varredura_barreiras(bt, df, names, symbol, args) -> int:
+    """Testa várias combinações de stop e alvo contra entradas sorteadas.
+
+    Existe para fechar a objeção natural de quem vê um resultado ruim:
+    "e se o problema forem só os parâmetros?". Se a estratégia carrega
+    informação, ela vence o sorteio em alguma configuração. Se acompanha o
+    sorteio em todas, o que falta não é ajuste — é sinal.
+
+    Os sinais são calculados uma vez por estratégia e reaproveitados em
+    todas as barreiras. Além de ser bem mais rápido, garante que a única
+    coisa mudando entre as linhas é o stop e o alvo.
+    """
+    from .backtest.spot import breakeven_liquido
+
+    grade = [
+        (0.5, 0.5), (0.5, 1.0), (0.5, 1.5),
+        (1.0, 1.0), (1.0, 2.0), (1.0, 3.0),
+        (2.0, 2.0), (2.0, 4.0), (2.0, 6.0),
+    ]
+    SEEDS = 5
+
+    print(f"\nCalculando sinais de {len(names)} estratégias "
+          f"(uma vez só, reaproveitados em {len(grade)} combinações)...")
+    preps = {}
+    for nome in names:
+        try:
+            preps[nome] = bt.preparar(df, nome)
+        except Exception as exc:
+            logger.error("falha ao preparar %s: %s", nome, exc)
+    if not preps:
+        print("\n✖ Nenhuma estratégia pôde ser preparada.\n")
+        return 1
+
+    dados = next(iter(preps.values())).data
+    densidade = sum(bt.densidade_de_sinais(pp) for pp in preps.values()) / len(preps)
+    aleatorios = [bt.preparar_aleatorio(dados, densidade, seed) for seed in range(SEEDS)]
+
+    print("\n" + "=" * 105)
+    print(f"  VARREDURA DE BARREIRAS — {symbol}, {len(df)} candles, "
+          f"taxa {args.fee}% por ordem")
+    print("  a pergunta: existe alguma combinação em que a estratégia "
+          "vença o sorteio?")
+    print("=" * 105)
+    print(f"  {'stop':>5}{'alvo':>6}{'equilíbrio':>12}   "
+          f"{'melhor estratégia':<22}{'acerto':>8}"
+          f"{'melhor sorteio':>20}"
+          f"{'diferença':>11}{'lucro':>9}")
+    print("-" * 105)
+
+    diferencas = []
+    for stop, alvo in grade:
+        bt.stop_loss_pct, bt.take_profit_pct = stop, alvo
+        be = breakeven_liquido(stop, alvo, args.fee, args.slippage)
+
+        linhas = []
+        for nome, prep in preps.items():
+            r = bt.run(df, nome, symbol, preparado=prep)
+            if r.stats.total_trades >= 20:
+                linhas.append((nome, r.stats.win_rate, r.stats.net_profit))
+        if not linhas:
+            print(f"  {stop:>5.1f}{alvo:>6.1f}{be:>11.1f}%   "
+                  f"(nenhuma chegou a 20 operações)")
+            continue
+
+        acertos = []
+        for prep_a in aleatorios:
+            ra = bt.run(df, "aleatório", symbol, preparado=prep_a)
+            if ra.stats.total_trades:
+                acertos.append(ra.stats.win_rate)
+        if not acertos:
+            continue
+
+        # Comparação justa: a coluna da estratégia é o melhor de N, então o
+        # sorteio também tem de ser o melhor de N sementes. Confrontar o
+        # melhor de 5 contra a MÉDIA do acaso fabrica vantagem do nada — foi
+        # exatamente assim que a fase anterior produziu uma ilusão de +9pp.
+        sorteio = max(acertos)
+        media_sorteio = sum(acertos) / len(acertos)
+
+        nome, acerto, lucro = max(linhas, key=lambda l: l[1])
+        dif = acerto - sorteio
+        diferencas.append(dif)
+        marca = "  <<" if acerto > be else ""
+        print(f"  {stop:>5.1f}{alvo:>6.1f}{be:>11.1f}%   {nome:<22}"
+              f"{acerto:>7.1f}%{sorteio:>19.1f}%{dif:>+10.1f}pp"
+              f"{lucro:>+9.2f}{marca}")
+
+    print("=" * 105)
+    if diferencas:
+        media = sum(diferencas) / len(diferencas)
+        melhor = max(diferencas)
+        print(f"\n  Vantagem média sobre o sorteio: {media:+.1f}pp "
+              f"(melhor combinação: {melhor:+.1f}pp)")
+        print(f"  Ambas as colunas são o melhor de {SEEDS} — estratégias e "
+              f"sementes disputam em igualdade.")
+        if melhor <= 1.5:
+            print("\n  Nenhuma combinação de barreiras produz vantagem. O stop e o")
+            print("  alvo decidem quantas operações ganham, mas não SE há o que")
+            print("  ganhar — isso depende de a entrada prever alguma coisa, e ela")
+            print("  não prevê. Ajustar parâmetros aqui é reorganizar o acaso.")
+        else:
+            print(f"\n  Uma combinação se destaca ({melhor:+.1f}pp). Antes de "
+                  f"acreditar, rode-a\n  isolada com --holdout: escolher a melhor "
+                  f"de {len(diferencas)} já premia a sorte.")
+    print("\n  << marca as linhas em que o acerto supera o equilíbrio líquido.\n")
     return 0
 
 
@@ -747,6 +858,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="stop loss em %% do preço de entrada (padrão 1.0)")
     p_spot.add_argument("--target", type=float, default=1.5,
                         help="alvo em %% do preço de entrada (padrão 1.5)")
+    p_spot.add_argument("--sweep", action="store_true",
+                        help="varre combinações de stop/alvo contra o sorteio")
     p_spot.add_argument("--no-baseline", action="store_true",
                         help="não calcular a referência de entradas aleatórias")
     p_spot.add_argument("--fee", type=float, default=0.1,

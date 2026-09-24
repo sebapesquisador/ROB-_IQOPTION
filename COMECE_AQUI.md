@@ -206,6 +206,32 @@ sua estratégia cai dentro dela, ela é indistinguível de sorteio.
 
 Para desligar: `--no-baseline`.
 
+### "E se o problema forem só os parâmetros?"
+
+É a objeção certa, e tem resposta medível:
+
+```powershell
+python -m trading_bot.cli backtest-spot --symbol BTCUSDT --candles 30000 --sweep
+```
+
+A varredura testa 9 combinações de stop e alvo — de 0,5%/0,5% a 2%/6% — e
+em cada uma compara a melhor estratégia contra o melhor de 5 sorteios.
+
+Duas cautelas embutidas:
+
+- **Os sinais são calculados uma vez e reaproveitados.** As entradas são
+  as mesmas em todas as linhas, então a única coisa variando é a barreira.
+- **Melhor contra melhor.** Comparar a melhor de 5 estratégias com a
+  *média* do acaso fabricaria vantagem do nada — foi assim que a fase da
+  IQ Option produziu uma ilusão de +9pp. Nos testes internos, essa
+  correção sozinha derrubou a vantagem aparente de +2,8pp para +1,0pp.
+
+Se nenhuma linha vencer, a conclusão é que o stop e o alvo decidem
+**quantas** operações ganham, não **se** há o que ganhar. Isso depende da
+entrada prever algo.
+
+Leva alguns minutos com 30 mil candles.
+
 ### O tamanho da amostra é o que mais engana
 
 3000 candles de 15 min cobrem só ~31 dias e costumam render 10 a 40
