@@ -9,6 +9,7 @@ os 7,5% embutidos no payout de 85% de uma binária.
 import pandas as pd
 import pytest
 
+from trading_bot.core.config import StrategyConfig
 from trading_bot.core.models import Direction
 import trading_bot.backtest.spot as spot_mod
 from trading_bot.backtest.spot import SpotBacktester, SpotResult
@@ -275,3 +276,124 @@ class TestCustoNoEquilibrio:
         assert observado == pytest.approx(payoff_liquido(1.0, 2.0, 0.1), rel=0.01)
         # E a promessa nominal de 2.00x não se cumpre.
         assert observado < 1.6
+
+
+def passeio_aleatorio(n=15000, seed=7, vol=0.0015):
+    """Série sem previsibilidade alguma, por construção.
+
+    Serve de laboratório: se o motor reproduz aqui o acerto que a teoria
+    prevê, então o número que ele mostra em dados reais também é confiável.
+    """
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, vol, n)))
+    hi = close * (1 + np.abs(rng.normal(0, vol / 2, n)))
+    lo = close * (1 - np.abs(rng.normal(0, vol / 2, n)))
+    op = np.concatenate([[100.0], close[:-1]])
+    return pd.DataFrame({
+        "timestamp": pd.date_range("2024-01-01", periods=n, freq="15min"),
+        "open": op,
+        "high": np.maximum(hi, np.maximum(op, close)),
+        "low": np.minimum(lo, np.minimum(op, close)),
+        "close": close, "volume": 1.0,
+    })
+
+
+class TestReferenciaAleatoria:
+    """O piso contra o qual as estratégias precisam ser comparadas.
+
+    Sem esta linha, 33% de acerto parece defeito das estratégias. Com ela,
+    vê-se que é o que as barreiras produzem sozinhas: com stop 1% e alvo
+    2%, o preço toca o stop duas vezes mais que o alvo.
+    """
+
+    def test_entrada_aleatoria_e_reprodutivel(self):
+        from trading_bot.backtest.spot import _EntradaAleatoria
+        a = _EntradaAleatoria(0.3, seed=1)
+        b = _EntradaAleatoria(0.3, seed=1)
+        c = _EntradaAleatoria(0.3, seed=2)
+        sa = [a.evaluate(None).is_actionable for _ in range(50)]
+        sb = [b.evaluate(None).is_actionable for _ in range(50)]
+        sc = [c.evaluate(None).is_actionable for _ in range(50)]
+        assert sa == sb          # mesma semente, mesmo resultado
+        assert sa != sc          # sementes diferentes exploram caminhos diferentes
+
+    def test_entrada_aleatoria_nao_olha_o_preco(self):
+        """Se olhasse, deixaria de ser controle do experimento."""
+        from trading_bot.backtest.spot import _EntradaAleatoria
+        e = _EntradaAleatoria(0.5, seed=3)
+        # Passar janelas radicalmente diferentes não muda a sequência.
+        seq_a = [e.evaluate(None).is_actionable for _ in range(30)]
+        e2 = _EntradaAleatoria(0.5, seed=3)
+        seq_b = [e2.evaluate("qualquer coisa") .is_actionable for _ in range(30)]
+        assert seq_a == seq_b
+
+    @pytest.mark.parametrize("stop,alvo,esperado", [
+        (1.0, 1.0, 50.0),
+        (1.0, 2.0, 33.3),
+        (1.0, 3.0, 25.0),
+    ])
+    def test_acerto_do_sorteio_segue_stop_sobre_stop_mais_alvo(
+        self, stop, alvo, esperado
+    ):
+        """Num passeio aleatório o acerto é stop/(stop+alvo), e nada mais.
+
+        É o resultado que explica por que todas as estratégias do relatório
+        aterrissaram em ~33% com barreiras 2:1: não é coincidência entre
+        elas, é a mecânica.
+        """
+        from trading_bot.backtest.spot import _EntradaAleatoria
+        df = passeio_aleatorio()
+        bt = SpotBacktester(
+            StrategyConfig(name="rsi_reversal"), None,
+            stop_loss_pct=stop, take_profit_pct=alvo,
+            fee_pct=0.0, initial_balance=1000.0,
+        )
+        total = vitorias = 0
+        for seed in range(3):
+            r = bt.run(df, "aleatório", strategy=_EntradaAleatoria(0.03, seed))
+            total += r.stats.total_trades
+            vitorias += sum(1 for t in r.trades if t.net > 0)
+        assert total > 250, "amostra do próprio teste insuficiente"
+        obtido = 100 * vitorias / total
+        # Fica um pouco abaixo da teoria: quando stop e alvo caem no mesmo
+        # candle o motor assume stop, de propósito.
+        assert esperado - 4.5 <= obtido <= esperado + 2.0
+
+    def test_referencia_devolve_faixa_de_ruido(self):
+        df = passeio_aleatorio(n=8000)
+        bt = SpotBacktester(
+            StrategyConfig(name="rsi_reversal"), None,
+            stop_loss_pct=1.0, take_profit_pct=2.0, fee_pct=0.1,
+        )
+        base = bt.referencia_aleatoria(df, n_trades_alvo=120, seeds=5)
+        assert base["sementes"] == 5
+        assert base["win_rate_min"] <= base["win_rate"] <= base["win_rate_max"]
+        assert base["win_rate_max"] > base["win_rate_min"], "faixa não pode ser um ponto"
+        assert 20 <= base["win_rate"] <= 45
+        assert "aleatório" in base["strategy"]
+
+    def test_referencia_respeita_a_quantidade_pedida(self):
+        df = passeio_aleatorio(n=8000)
+        bt = SpotBacktester(
+            StrategyConfig(name="rsi_reversal"), None,
+            stop_loss_pct=1.0, take_profit_pct=2.0,
+        )
+        poucos = bt.referencia_aleatoria(df, n_trades_alvo=40, seeds=3)
+        muitos = bt.referencia_aleatoria(df, n_trades_alvo=200, seeds=3)
+        assert poucos["total_trades"] < muitos["total_trades"]
+
+    def test_referencia_nao_quebra_com_dados_curtos(self):
+        assert SpotBacktester(StrategyConfig(name="rsi_reversal")).referencia_aleatoria(
+            passeio_aleatorio(n=30), 50
+        ) == {}
+
+    def test_referencia_ignora_pedido_vazio(self):
+        bt = SpotBacktester(StrategyConfig(name="rsi_reversal"))
+        assert bt.referencia_aleatoria(passeio_aleatorio(n=2000), 0) == {}
+
+    def test_run_aceita_estrategia_injetada_sem_registro(self):
+        """'aleatório' não existe no registro — e não deve existir."""
+        from trading_bot.core.strategies import get_strategy
+        with pytest.raises(KeyError):
+            get_strategy("aleatório", StrategyConfig(name="rsi_reversal"))

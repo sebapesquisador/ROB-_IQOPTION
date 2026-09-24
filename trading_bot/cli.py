@@ -228,6 +228,7 @@ def cmd_backtest(args) -> int:
               f"{r['edge_pp']:>+9.1f}p{r['net_profit']:>+11.2f}"
               f"{(pf if pf is not None else 99.99):>7.2f}{r['max_drawdown_pct']:>7.1f}"
               f"{r.get('p_value', 1.0):>9.3f}")
+
     print("=" * 105)
     for r in results:
         if "error" not in r:
@@ -562,6 +563,26 @@ def cmd_backtest_spot(args) -> int:
               f"{r['payoff_ratio']:>8.2f}{r['net_profit']:>+11.2f}"
               f"{r['total_fees']:>9.2f}{r['max_drawdown_pct']:>7.1f}"
               f"{r.get('p_value', 1.0):>9.3f}")
+
+    # Referência aleatória: sem ela, um acerto de 33% parece defeito da
+    # estratégia quando pode ser só a mecânica das barreiras.
+    base = {}
+    if not args.no_baseline:
+        validos_bt = [r for r in results if "error" not in r and r["total_trades"]]
+        if validos_bt:
+            alvo = round(sum(r["total_trades"] for r in validos_bt) / len(validos_bt))
+            base = bt.referencia_aleatoria(df, alvo, symbol)
+    if base:
+        print("-" * 105)
+        print(f"  {base['strategy']:<22}{base['total_trades']:>7}"
+              f"{base['win_rate']:>8.1f}%{base['payoff_ratio']:>8.2f}"
+              f"{base['net_profit']:>+11.2f}{base['total_fees']:>9.2f}"
+              f"{base['max_drawdown_pct']:>7.1f}"
+              f"{'—':>9}")
+        faixa = f"{base['win_rate_min']:.1f}% a {base['win_rate_max']:.1f}%"
+        print(f"  {'':<22}   acerto das sementes: {faixa}  ← qualquer "
+              f"estratégia dentro desta faixa não se distingue de sorteio")
+
     print("=" * 105)
     for r in results:
         if "error" not in r:
@@ -569,6 +590,30 @@ def cmd_backtest_spot(args) -> int:
     print("=" * 105)
     print(f"\n  payoff = ganho médio ÷ perda média. Em spot o acerto sozinho não")
     print(f"  decide: com estes parâmetros, o alvo é passar de {be_liq:.1f}%.")
+
+    if base:
+        melhor = max((r for r in results if "error" not in r and r["total_trades"]),
+                     key=lambda r: r["win_rate"], default=None)
+        if melhor:
+            dif = melhor["win_rate"] - base["win_rate"]
+            print(f"\n  Leitura da referência aleatória:")
+            print(f"    entradas sorteadas acertam {base['win_rate']:.1f}% — é o piso "
+                  f"que a mecânica\n    de stop {args.stop}% / alvo {args.target}% "
+                  f"produz sem informação nenhuma.")
+            dentro = base["win_rate_min"] <= melhor["win_rate"] <= base["win_rate_max"]
+            if dentro:
+                print(f"    A melhor estratégia ({melhor['strategy']}, "
+                      f"{melhor['win_rate']:.1f}%) cai DENTRO da faixa de\n"
+                      f"    ruído: nestes dados ela não prevê nada que o acaso "
+                      f"não preveja.")
+            elif dif > 0:
+                print(f"    {melhor['strategy']} fica {dif:+.1f}pp acima do sorteio — "
+                      f"há sinal,\n    mas ainda {melhor['win_rate'] - be_liq:+.1f}pp "
+                      f"do equilíbrio de {be_liq:.1f}%.")
+            else:
+                print(f"    {melhor['strategy']} fica {dif:+.1f}pp ABAIXO do sorteio: "
+                      f"as regras estão\n    piorando a entrada, não melhorando.")
+            print(f"\n    Compare sempre contra esta linha, não contra zero.")
 
     # Amostra: 30 operações é o mínimo para o teste ter alguma força. Com
     # dados da Binance isso é resolvível — o histórico tem anos, e o único
@@ -702,6 +747,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="stop loss em %% do preço de entrada (padrão 1.0)")
     p_spot.add_argument("--target", type=float, default=1.5,
                         help="alvo em %% do preço de entrada (padrão 1.5)")
+    p_spot.add_argument("--no-baseline", action="store_true",
+                        help="não calcular a referência de entradas aleatórias")
     p_spot.add_argument("--fee", type=float, default=0.1,
                         help="taxa por ordem em %% (padrão 0.1 = Binance spot)")
     p_spot.add_argument("--slippage", type=float, default=0.0,

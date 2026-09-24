@@ -183,6 +183,29 @@ cresce quanto maior o alvo em relação ao stop.
 Quanto menor o alvo, mais a taxa pesa: um scalp de 0,3% com stop de 0,3%
 precisa de **62,5%** de acerto. Alvos apertados são devorados pelo custo.
 
+### A linha "aleatório" é a mais importante do relatório
+
+O relatório inclui uma referência que entra em candles **sorteados**, sem
+olhar para o preço. Ela existe para responder à única pergunta que importa:
+*33% de acerto é ruim, ou é isso que qualquer entrada produz?*
+
+Com stop 1% e alvo 2%, o preço tende a tocar o stop duas vezes mais que o
+alvo. O acerto esperado de um sorteio é:
+
+$$\frac{stop}{stop + alvo} = \frac{1}{1+2} = 33{,}3\%$$
+
+Verificado no código, num passeio aleatório de 60 mil candles: 31,9%
+obtido contra 33,3% teóricos.
+
+Ou seja: **33% de acerto não significa nada.** É o piso da mecânica. Uma
+estratégia só está fazendo algum trabalho se ficar acima dessa linha — e
+só é lucrativa se passar do equilíbrio líquido (40,0% no exemplo).
+
+O relatório mostra também a faixa entre a melhor e a pior semente. Se a
+sua estratégia cai dentro dela, ela é indistinguível de sorteio.
+
+Para desligar: `--no-baseline`.
+
 ### O tamanho da amostra é o que mais engana
 
 3000 candles de 15 min cobrem só ~31 dias e costumam render 10 a 40

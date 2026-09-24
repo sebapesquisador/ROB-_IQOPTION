@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -225,6 +226,35 @@ class SpotResult:
         }
 
 
+class _EntradaAleatoria:
+    """Entra em candles sorteados, sem olhar para o preço.
+
+    Deliberadamente burra: é o controle do experimento. Qualquer
+    estratégia que não supere isto não está extraindo informação do
+    mercado, apenas pagando taxa para sortear.
+    """
+
+    __slots__ = ("prob", "_rng", "_warmup")
+
+    def __init__(self, prob: float, seed: int, warmup: int = 50) -> None:
+        self.prob = prob
+        self._rng = random.Random(seed)
+        self._warmup = warmup
+
+    def required_candles(self) -> int:
+        return self._warmup
+
+    def evaluate(self, window):
+        acionavel = self._rng.random() < self.prob
+        return _SinalSimples(Direction.CALL, acionavel)
+
+
+@dataclass(slots=True)
+class _SinalSimples:
+    direction: Any
+    is_actionable: bool
+
+
 class SpotBacktester:
     """
     Simula compra e venda a mercado com stop e alvo.
@@ -259,8 +289,11 @@ class SpotBacktester:
         self.max_bars = max_bars
 
     def run(self, candles: pd.DataFrame, strategy_name: str,
-            symbol: str = "BTCUSDT") -> SpotResult:
-        strategy = get_strategy(strategy_name, self.strategy_config)
+            symbol: str = "BTCUSDT", strategy=None) -> SpotResult:
+        # `strategy` injetável para poder rodar a referência aleatória, que
+        # não está (nem deve estar) no registro de estratégias reais.
+        if strategy is None:
+            strategy = get_strategy(strategy_name, self.strategy_config)
         data = indicators.enrich(candles, self.strategy_config).reset_index(drop=True)
 
         result = SpotResult(
@@ -410,3 +443,53 @@ class SpotBacktester:
                 logger.error("falha ao testar %s: %s", nome, exc)
                 saida.append({"strategy": nome, "error": str(exc)})
         return sorted(saida, key=lambda r: r.get("net_profit", float("-inf")), reverse=True)
+
+    def referencia_aleatoria(
+        self, candles: pd.DataFrame, n_trades_alvo: int,
+        symbol: str = "BTCUSDT", seeds: int = 7,
+    ) -> dict:
+        """Mede o que entradas sorteadas produzem nos mesmos candles.
+
+        É a pergunta que o relatório não respondia: uma estratégia com 33%
+        de acerto é ruim, ou é isso que qualquer entrada produz com estas
+        barreiras? Com stop 1% e alvo 2%, um passeio aleatório toca o stop
+        duas vezes mais que o alvo — o acerto esperado é 1/3, sem que
+        nenhuma informação sobre o mercado esteja envolvida.
+
+        Sem essa linha, 33% parece um defeito das estratégias. Com ela,
+        fica claro que é o piso da mecânica, e que o trabalho da estratégia
+        é ficar acima dele.
+
+        Roda várias sementes porque uma só teria o mesmo problema de
+        amostra que estamos tentando diagnosticar. Devolve média e extremos
+        — os extremos são a faixa de ruído.
+        """
+        if len(candles) < 60 or n_trades_alvo <= 0:
+            return {}
+
+        prob = min(1.0, n_trades_alvo / max(len(candles) - 50, 1))
+        linhas = []
+        for seed in range(seeds):
+            r = self.run(candles, "aleatório", symbol,
+                         strategy=_EntradaAleatoria(prob, seed))
+            if r.stats.total_trades:
+                linhas.append(r.to_dict()["summary"])
+        if not linhas:
+            return {}
+
+        def media(campo):
+            return sum(l[campo] for l in linhas) / len(linhas)
+
+        acertos = sorted(l["win_rate"] for l in linhas)
+        return {
+            "strategy": f"aleatório ({len(linhas)} sementes)",
+            "total_trades": round(media("total_trades")),
+            "win_rate": round(media("win_rate"), 1),
+            "payoff_ratio": round(media("payoff_ratio"), 2),
+            "net_profit": round(media("net_profit"), 2),
+            "total_fees": round(media("total_fees"), 2),
+            "max_drawdown_pct": round(media("max_drawdown_pct"), 1),
+            "win_rate_min": round(acertos[0], 1),
+            "win_rate_max": round(acertos[-1], 1),
+            "sementes": len(linhas),
+        }
