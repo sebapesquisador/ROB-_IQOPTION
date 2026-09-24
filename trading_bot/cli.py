@@ -668,16 +668,24 @@ def cmd_backtest_spot(args) -> int:
           f"taxa {args.fee}% por ordem")
     print(f"  payoff líquido {rr_liq:.2f}x → ACERTO DE EQUILÍBRIO {be_liq:.1f}%"
           f"   (nominal {rr:.2f}x / {be_bruto:.1f}% antes do custo)")
+    print("  ^ vale para quem sai SÓ no stop ou no alvo. A coluna 'equilíb.' "
+          "manda em cada linha.")
     print("=" * 105)
     print(f"  {'estratégia':<22}{'trades':>7}{'acerto':>9}{'payoff':>8}"
-          f"{'lucro':>11}{'taxas':>9}{'DD%':>7}{'p-valor':>9}")
+          f"{'equilíb.':>10}{'lucro':>11}{'taxas':>9}{'DD%':>7}{'p-valor':>9}")
     print("-" * 105)
     for r in results:
         if "error" in r:
             print(f"  {r['strategy']:<22}  erro: {r['error']}")
             continue
+        # O equilíbrio É POR ESTRATÉGIA. Quando ela fecha pela própria
+        # regra, o ganho médio não é o alvo, e o equilíbrio nominal do
+        # cabeçalho não vale para ela. Marcado com * e explicado abaixo.
+        be_r = r.get("breakeven_win_rate", be_liq)
+        marca = "*" if r.get("saidas_por_sinal") else " "
         print(f"  {r['strategy']:<22}{r['total_trades']:>7}{r['win_rate']:>8.1f}%"
-              f"{r['payoff_ratio']:>8.2f}{r['net_profit']:>+11.2f}"
+              f"{r['payoff_ratio']:>8.2f}{be_r:>9.1f}%{marca}"
+              f"{r['net_profit']:>+10.2f}"
               f"{r['total_fees']:>9.2f}{r['max_drawdown_pct']:>7.1f}"
               f"{r.get('p_value', 1.0):>9.3f}")
 
@@ -693,7 +701,8 @@ def cmd_backtest_spot(args) -> int:
         print("-" * 105)
         print(f"  {base['strategy']:<22}{base['total_trades']:>7}"
               f"{base['win_rate']:>8.1f}%{base['payoff_ratio']:>8.2f}"
-              f"{base['net_profit']:>+11.2f}{base['total_fees']:>9.2f}"
+              f"{base.get('breakeven_win_rate', be_liq):>9.1f}% "
+              f"{base['net_profit']:>+10.2f}{base['total_fees']:>9.2f}"
               f"{base['max_drawdown_pct']:>7.1f}"
               f"{'—':>9}")
         faixa = f"{base['win_rate_min']:.1f}% a {base['win_rate_max']:.1f}%"
@@ -706,7 +715,8 @@ def cmd_backtest_spot(args) -> int:
             print(f"  {r['strategy']:<22} {r['verdict']}")
     print("=" * 105)
     print(f"\n  payoff = ganho médio ÷ perda média. Em spot o acerto sozinho não")
-    print(f"  decide: com estes parâmetros, o alvo é passar de {be_liq:.1f}%.")
+    print(f"  decide: o alvo é passar do equilíbrio DA PRÓPRIA LINHA "
+          f"(coluna 'equilíb.').")
 
     if base:
         melhor = max((r for r in results if "error" not in r and r["total_trades"]),
@@ -732,19 +742,41 @@ def cmd_backtest_spot(args) -> int:
                 n_m = melhor["total_trades"]
                 vitorias = round(melhor["win_rate"] * n_m / 100)
                 pv = p_binomial_cauda(vitorias, n_m, base["win_rate"] / 100)
-                falta_be = melhor["win_rate"] - be_liq
+                # O equilíbrio que vale é o DELA, deduzido do payoff que ela
+                # realmente produziu. Usar o nominal aqui já anunciou
+                # "16,6pp acima do equilíbrio" para uma estratégia que
+                # perdeu dinheiro — o relatório se contradizendo sozinho.
+                be_real = melhor.get("breakeven_win_rate", be_liq)
+                falta_be = melhor["win_rate"] - be_real
                 print(f"    {melhor['strategy']} fica {dif:+.1f}pp acima do sorteio, "
                       f"em {n_m} operações.")
-                if pv < 0.05:
-                    print(f"    Isso é mais do que o acaso costuma produzir "
-                          f"(p={pv:.3f}), mas ainda\n    {falta_be:+.1f}pp do "
-                          f"equilíbrio de {be_liq:.1f}% — sinal pequeno demais "
-                          f"para pagar o custo.")
+                if melhor.get("saidas_por_sinal"):
+                    # Acerto só é comparável quando os dois lados saem pela
+                    # mesma porta. Quem realiza lucro cedo e deixa a perda
+                    # correr até o stop fabrica acerto alto sem prever nada.
+                    print(f"    ⚠ Mas {melhor['strategy']} fecha "
+                          f"{melhor['saidas_por_sinal']} das {n_m} operações pela "
+                          f"própria regra,\n      enquanto o sorteio só sai no "
+                          f"stop ou no alvo. Os dois acertos NÃO são\n"
+                          f"      comparáveis: sair no lucro cedo infla o acerto "
+                          f"e esmaga o payoff\n      (o dela é "
+                          f"{melhor['payoff_ratio']:.2f}x contra {rr_liq:.2f}x do "
+                          f"sorteio). Ignore esta diferença de pp.")
+                if falta_be >= 0:
+                    print(f"    Contra o equilíbrio DELA ({be_real:.1f}%, vindo do "
+                          f"payoff {melhor['payoff_ratio']:.2f}x),\n    está "
+                          f"{falta_be:+.1f}pp — margem positiva (p={pv:.3f}).")
                 else:
+                    print(f"    Contra o equilíbrio DELA ({be_real:.1f}%, vindo do "
+                          f"payoff {melhor['payoff_ratio']:.2f}x),\n    está "
+                          f"{falta_be:+.1f}pp: acerta muito e ganha pouco em cada "
+                          f"acerto.\n    É assim que uma estratégia com 46% de "
+                          f"acerto perde dinheiro.")
+                if pv >= 0.05:
                     preciso = _trades_para_significancia(
                         melhor["win_rate"] / 100, base["win_rate"] / 100)
-                    print(f"    Mas p={pv:.3f}: está dentro do que o acaso produz "
-                          f"nessa amostra.")
+                    print(f"    Quanto à diferença para o sorteio: p={pv:.3f}, "
+                          f"dentro do que o acaso\n    produz nessa amostra.")
                     if preciso:
                         print(f"    Seriam necessárias ~{preciso} operações para "
                               f"essa diferença\n    significar alguma coisa "

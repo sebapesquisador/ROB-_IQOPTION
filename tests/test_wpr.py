@@ -366,3 +366,85 @@ class TestAvisoDeSaidaAoVivo:
         eng._avisar_sobre_saida_da_estrategia()
         texto = storage.log_event.call_args[0][2]
         assert "saída" in texto.lower()
+
+
+class TestEquilibrioComSaidaPropria:
+    """O equilíbrio nominal (stop/alvo) não vale para quem sai pelo sinal.
+
+    Esta classe existe por um erro real: o relatório anunciou "+16,6pp acima
+    do equilíbrio de 30,0%" para uma estratégia que PERDEU dinheiro, porque
+    comparava o acerto com o equilíbrio deduzido de stop e alvo enquanto as
+    saídas aconteciam noutro lugar.
+    """
+
+    def _resultado(self):
+        cfg = StrategyConfig(name="wpr_extremes", min_confidence=0.0,
+                             min_atr_pct=0.0, max_atr_pct=100.0)
+        # Barreiras largas de propósito: o objetivo é que a SAÍDA PELO
+        # SINAL aconteça. Com stop apertado ele dispara antes e o cenário
+        # que queremos medir não chega a existir.
+        bt = SpotBacktester(cfg, None, stop_loss_pct=20.0, take_profit_pct=60.0,
+                            fee_pct=0.1, max_bars=500)
+        return bt.run(candles(PERCURSO, folga=0.3), "wpr_extremes")
+
+    def test_conta_as_saidas_pela_regra_da_estrategia(self):
+        r = self._resultado()
+        esperado = sum(1 for t in r.trades if t.reason == "saída da estratégia")
+        assert r.saidas_por_sinal == esperado
+        assert r.saidas_por_sinal > 0
+
+    def test_estrategia_sem_saida_propria_conta_zero(self):
+        cfg = StrategyConfig(name="rsi_reversal", min_confidence=0.0,
+                             min_atr_pct=0.0, max_atr_pct=100.0)
+        rng = np.random.default_rng(3)
+        precos = 100 + rng.normal(0, 1, 600).cumsum()
+        r = SpotBacktester(cfg, None, stop_loss_pct=1.0, take_profit_pct=2.0,
+                           fee_pct=0.0, max_bars=30).run(
+                               candles(precos, folga=0.3), "rsi_reversal")
+        assert r.saidas_por_sinal == 0
+
+    def test_o_resumo_expoe_o_contador(self):
+        assert "saidas_por_sinal" in self._resultado().to_dict()["summary"]
+
+    def test_equilibrio_vem_do_payoff_observado_nao_do_alvo(self):
+        # Com alvo 3x o stop, o equilíbrio nominal é ~30%. Saindo cedo o
+        # payoff despenca e o equilíbrio real sobe muito acima disso.
+        r = self._resultado()
+        if r.payoff_ratio and r.payoff_ratio < 1.0:
+            assert r.breakeven_win_rate > 50.0
+
+    def test_acerto_alto_com_payoff_baixo_ainda_reprova(self):
+        # O caso que enganou: 46,6% de acerto e prejuízo. O veredito tem de
+        # olhar o dinheiro, não o acerto.
+        r = self._resultado()
+        if r.stats.net_profit <= 0:
+            # Pode sair "amostra insuficiente" quando há poucas operações;
+            # o que NUNCA pode sair é aprovação para quem perdeu dinheiro.
+            assert "APROVADA" not in r._verdict()
+
+
+class TestRelatorioNaoUsaEquilibrioNominal:
+    """Trava de código: o texto de leitura não pode voltar a usar be_liq."""
+
+    def _bloco(self):
+        from pathlib import Path
+        from trading_bot import cli
+        # Pelo módulo, não por caminho relativo: o pytest pode rodar de
+        # qualquer diretório.
+        s = Path(cli.__file__).read_text(encoding="utf-8")
+        i = s.index("def cmd_backtest_spot")
+        return s[i:s.index("\ndef ", i + 10)]
+
+    def test_a_tabela_mostra_o_equilibrio_por_linha(self):
+        b = self._bloco()
+        assert "equilíb." in b
+        assert 'r.get("breakeven_win_rate"' in b
+
+    def test_a_leitura_usa_o_equilibrio_da_estrategia(self):
+        b = self._bloco()
+        assert 'be_real = melhor.get("breakeven_win_rate"' in b
+        # o erro original: comparar o acerto com o equilíbrio nominal
+        assert 'falta_be = melhor["win_rate"] - be_liq' not in b
+
+    def test_avisa_quando_os_acertos_nao_sao_comparaveis(self):
+        assert 'melhor.get("saidas_por_sinal")' in self._bloco()

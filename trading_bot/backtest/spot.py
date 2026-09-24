@@ -226,6 +226,16 @@ class SpotResult:
         return "APROVADA: lucro consistente, estatisticamente significativo"
 
     @property
+    def saidas_por_sinal(self) -> int:
+        """Operações fechadas pela regra da estratégia, não por stop/alvo.
+
+        Existe para o relatório saber que o equilíbrio nominal (deduzido de
+        stop e alvo) NÃO se aplica: quando a estratégia fecha sozinha, o
+        ganho médio deixa de ser o alvo e o payoff real mede outra coisa.
+        """
+        return sum(1 for t in self.trades if t.reason == "saída da estratégia")
+
+    @property
     def exposicao_pct(self) -> float:
         """Percentual do tempo com posição aberta.
 
@@ -256,6 +266,7 @@ class SpotResult:
                 "fee_pct": self.fee_pct,
                 "payoff_ratio": round(self.payoff_ratio, 2),
                 "breakeven_win_rate": round(self.breakeven_win_rate, 2),
+                "saidas_por_sinal": self.saidas_por_sinal,
                 "edge_pp": round(self.edge, 2),
                 "expectancy_pct": round(self.expectancy_pct, 4),
                 "total_fees": round(self.total_fees, 2),
