@@ -257,3 +257,63 @@ class Confluence(Strategy):
             "agreement": round(agreement, 3),
         }
         return Signal(direction, conf, self.name, f"confluência {agreement:.0%}: {reasons}", ind)
+
+
+@register("wpr_extremes")
+class WilliamsPercentRange(Strategy):
+    """Williams %R nos extremos: compra na exaustão vendedora, sai no meio da faixa."""
+
+    def generate(self, df: pd.DataFrame) -> Signal:
+        cur = self.last_closed(df)
+        wpr = cur.get("wpr", np.nan)
+        if pd.isna(wpr):
+            return Signal.none(self.name, "WPR indisponível")
+
+        wpr = float(wpr)
+        ind = {"wpr": round(wpr, 2)}
+        compra, venda = self.cfg.wpr_buy, self.cfg.wpr_sell
+
+        # CALL: fechamento colado na mínima da janela.
+        if wpr < compra:
+            # Confiança cresce com a distância além do gatilho. O piso de
+            # -100 limita o quanto dá para ultrapassar, então normalizamos
+            # por esse espaço restante em vez de por um número mágico.
+            espaco = abs(-100.0 - compra) or 1.0
+            excesso = (compra - wpr) / espaco
+            conf = _clamp(0.60 + excesso * 0.35)
+            return Signal(Direction.CALL, conf, self.name,
+                          f"WPR {wpr:.1f} abaixo de {compra:.0f}", ind)
+
+        # PUT: fechamento colado na máxima da janela.
+        if wpr > venda:
+            espaco = abs(0.0 - venda) or 1.0
+            excesso = (wpr - venda) / espaco
+            conf = _clamp(0.60 + excesso * 0.35)
+            return Signal(Direction.PUT, conf, self.name,
+                          f"WPR {wpr:.1f} acima de {venda:.0f}", ind)
+
+        return Signal.none(self.name, f"WPR {wpr:.1f} fora das zonas de entrada")
+
+    def should_exit(self, df: pd.DataFrame, direction: Direction) -> bool:
+        """Sai quando o oscilador volta para o miolo da faixa.
+
+        A saída não espelha a entrada: compra-se abaixo de -95 e sai-se
+        acima de -20. O intervalo largo entre os dois é o que dá à posição
+        espaço para render — uma saída simétrica encerraria no primeiro
+        repique.
+        """
+        if df is None or len(df) < 2:
+            return False
+        wpr = df["wpr"].iloc[-2] if "wpr" in df.columns else np.nan
+        if pd.isna(wpr):
+            return False
+
+        wpr = float(wpr)
+        if direction is Direction.CALL:
+            return wpr > self.cfg.wpr_exit_buy
+        if direction is Direction.PUT:
+            return wpr < self.cfg.wpr_exit_sell
+        return False
+
+    def required_candles(self) -> int:
+        return max(super().required_candles(), self.cfg.wpr_period + 2)

@@ -105,6 +105,20 @@ class Strategy(ABC):
     def generate(self, df: pd.DataFrame) -> Signal:
         """Produz o sinal. `df` já vem enriquecido com indicadores."""
 
+    def should_exit(self, df: pd.DataFrame, direction: "Direction") -> bool:
+        """A estratégia quer encerrar a posição aberta?
+
+        Padrão: não. A maioria das estratégias aqui só decide ENTRADA, e a
+        saída fica por conta do stop e do alvo. Estratégias de oscilador
+        costumam ter regra própria — comprar na exaustão e sair quando o
+        preço volta ao meio da faixa — e para essas o stop vira apenas rede
+        de proteção, não o mecanismo principal.
+
+        Vale a mesma regra de ouro do `generate`: decidir por `iloc[-2]`,
+        nunca pelo candle em formação.
+        """
+        return False
+
     def required_candles(self) -> int:
         """Quantidade mínima de candles para os indicadores estabilizarem."""
         return max(

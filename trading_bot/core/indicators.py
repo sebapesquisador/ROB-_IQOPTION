@@ -162,6 +162,27 @@ def crossunder(fast: pd.Series, slow: pd.Series) -> pd.Series:
     return (fast < slow) & (fast.shift(1) >= slow.shift(1))
 
 
+def williams_r(high: pd.Series, low: pd.Series, close: pd.Series,
+               period: int = 14) -> pd.Series:
+    """Williams %R: onde o fechamento está dentro da faixa do período.
+
+        WPR = (maior máxima - fechamento) / (maior máxima - menor mínima) x -100
+
+    Varia de -100 (fechou na mínima da janela) a 0 (fechou na máxima).
+    Perto de -100 indica pressão vendedora exaurida; perto de 0, o oposto.
+
+    Quando a janela inteira tem o mesmo preço, a divisão é 0/0. Nesse caso
+    devolvemos -50 (o meio da faixa) em vez de NaN: um mercado parado não é
+    dado ausente, e propagar NaN faria a estratégia perder candles bons
+    depois que o mercado voltasse a andar.
+    """
+    maior = high.rolling(window=period, min_periods=period).max()
+    menor = low.rolling(window=period, min_periods=period).min()
+    faixa = maior - menor
+    wpr = (maior - close) / faixa.replace(0.0, np.nan) * -100.0
+    return wpr.where(faixa != 0, -50.0)
+
+
 def enrich(df: pd.DataFrame, cfg) -> pd.DataFrame:
     """
     Anexa todos os indicadores configurados ao DataFrame de candles.
@@ -184,5 +205,6 @@ def enrich(df: pd.DataFrame, cfg) -> pd.DataFrame:
     out["atr"] = atr(high, low, close, cfg.atr_period)
     out["atr_pct"] = (out["atr"] / close.replace(0.0, np.nan)) * 100
     out["adx"] = adx(high, low, close, cfg.atr_period)
+    out["wpr"] = williams_r(high, low, close, cfg.wpr_period)
 
     return out

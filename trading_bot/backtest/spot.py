@@ -46,6 +46,7 @@ import pandas as pd
 from ..core import indicators
 from ..core.models import Direction, PerformanceStats
 from ..core.strategies import get_strategy
+from ..core.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +136,7 @@ class SpotTrade:
     entry_price: float
     exit_price: float
     qty: float
-    reason: str          # "alvo", "stop" ou "fim dos dados"
+    reason: str          # "alvo", "stop", "saída da estratégia", "tempo" ou "fim dos dados"
     gross: float
     fees: float
     net: float
@@ -283,6 +284,7 @@ class _Preparado:
     sinais: list          # índice do candle -> True (long), False (short) ou None
     warmup: int
     strategy_name: str
+    strategy: Any = None  # necessária para consultar saídas, que dependem da posição
 
 
 class _EntradaAleatoria:
@@ -373,7 +375,7 @@ class SpotBacktester:
             if sig.is_actionable:
                 sinais[i] = sig.direction is Direction.CALL
         return _Preparado(data=data, sinais=sinais, warmup=warmup,
-                          strategy_name=strategy_name)
+                          strategy_name=strategy_name, strategy=strategy)
 
     def run(self, candles: pd.DataFrame, strategy_name: str,
             symbol: str = "BTCUSDT", strategy=None,
@@ -382,8 +384,13 @@ class SpotBacktester:
         # não está (nem deve estar) no registro de estratégias reais.
         # `preparado` reaproveita sinais já calculados (varredura de barreiras).
         if preparado is not None:
-            strategy, data = None, preparado.data
+            data = preparado.data
             strategy_name = strategy_name or preparado.strategy_name
+            # A saída depende do estado da posição, então não pode ser
+            # pré-calculada como os sinais de entrada. A estratégia
+            # continua necessária — só o cálculo dos indicadores é que foi
+            # reaproveitado.
+            strategy = preparado.strategy
         else:
             if strategy is None:
                 strategy = get_strategy(strategy_name, self.strategy_config)
@@ -457,6 +464,17 @@ class SpotBacktester:
             exit_idx, exit_price, reason = None, None, ""
             limite = (entry_idx + self.max_bars) if self.max_bars else len(data) - 1
 
+            # Só consulta a estratégia se ela realmente define saída: a
+            # chamada por candle é cara, e a maioria sai por stop/alvo.
+            # `getattr` com padrão porque a referência aleatória e os dublês
+            # de teste são objetos avulsos, não subclasses de Strategy.
+            checa_saida = (
+                strategy is not None
+                and getattr(type(strategy), "should_exit", Strategy.should_exit)
+                is not Strategy.should_exit
+            )
+            direcao = Direction.CALL if is_long else Direction.PUT
+
             for j in range(entry_idx, min(limite, len(data) - 1) + 1):
                 hi = float(data["high"].iloc[j])
                 lo = float(data["low"].iloc[j])
@@ -474,6 +492,17 @@ class SpotBacktester:
                 if bateu_alvo:
                     exit_idx, exit_price, reason = j, target, "alvo"
                     break
+
+                # Regra da própria estratégia. Mesma convenção da entrada:
+                # decide com os candles fechados até j e executa na abertura
+                # de j+1. Sair no fechamento de j seria usar um preço que só
+                # se conhece depois da decisão.
+                if checa_saida and j + 1 < len(data):
+                    if strategy.should_exit(data.iloc[: j + 1], direcao):
+                        exit_idx = j + 1
+                        exit_price = float(data["open"].iloc[exit_idx])
+                        reason = "saída da estratégia"
+                        break
 
             if exit_idx is None:
                 exit_idx = min(limite, len(data) - 1)

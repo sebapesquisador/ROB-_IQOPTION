@@ -103,6 +103,55 @@ class StrategyConfig(BaseSettings):
     macd_slow: int = Field(default=26, ge=3)
     macd_signal: int = Field(default=9, ge=2)
 
+    # Williams %R — oscilador de -100 (fundo da faixa) a 0 (topo)
+    #
+    # Os quatro níveis são independentes de propósito: entrada e saída não
+    # precisam ser simétricas, e o intervalo entre elas é o que define se a
+    # estratégia segura a posição ou gira rápido. Todos ajustáveis no .env
+    # com o prefixo STRAT_.
+    wpr_period: int = Field(default=20, ge=2, le=200)
+    wpr_buy: float = Field(
+        default=-95.0, ge=-100, le=0,
+        description="Compra quando o WPR fica ABAIXO deste nível")
+    wpr_sell: float = Field(
+        default=-5.0, ge=-100, le=0,
+        description="Vende quando o WPR fica ACIMA deste nível")
+    wpr_exit_buy: float = Field(
+        default=-20.0, ge=-100, le=0,
+        description="Encerra a compra quando o WPR passa ACIMA deste nível")
+    wpr_exit_sell: float = Field(
+        default=-80.0, ge=-100, le=0,
+        description="Encerra a venda quando o WPR cai ABAIXO deste nível")
+
+    @model_validator(mode="after")
+    def _checar_niveis_wpr(self):
+        """Impede combinações que travariam a estratégia em silêncio.
+
+        Sem isso, trocar um número no .env pode produzir uma estratégia que
+        abre e fecha no mesmo candle — ou que nunca fecha — sem nenhum erro
+        visível. Melhor recusar a configuração do que operar assim.
+        """
+        if self.wpr_exit_buy <= self.wpr_buy:
+            raise ValueError(
+                f"STRAT_WPR_EXIT_BUY ({self.wpr_exit_buy}) precisa ser MAIOR que "
+                f"STRAT_WPR_BUY ({self.wpr_buy}): compra-se no fundo da faixa e "
+                f"sai-se mais acima. Do jeito atual a compra sairia no mesmo "
+                f"instante em que entrasse."
+            )
+        if self.wpr_exit_sell >= self.wpr_sell:
+            raise ValueError(
+                f"STRAT_WPR_EXIT_SELL ({self.wpr_exit_sell}) precisa ser MENOR que "
+                f"STRAT_WPR_SELL ({self.wpr_sell}): vende-se no topo da faixa e "
+                f"sai-se mais abaixo."
+            )
+        if self.wpr_buy >= self.wpr_sell:
+            raise ValueError(
+                f"STRAT_WPR_BUY ({self.wpr_buy}) precisa ser MENOR que "
+                f"STRAT_WPR_SELL ({self.wpr_sell}) — senão o mesmo candle "
+                f"dispara compra e venda ao mesmo tempo."
+            )
+        return self
+
     # ATR — usado como filtro de volatilidade
     atr_period: int = Field(default=14, ge=2)
     min_atr_pct: float = Field(
