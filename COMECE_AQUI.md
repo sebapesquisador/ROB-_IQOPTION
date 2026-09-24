@@ -163,15 +163,39 @@ A diferença mais importante é outra: em binária o acerto precisa vencer o
 payout, e 54,05% é só o empate. Em spot, o que decide é a relação entre o
 ganho e a perda:
 
-| razão alvo/stop | acerto necessário para empatar |
-|---|---|
-| 1x (alvo = stop) | 50,0% |
-| 1,5x | 40,0% |
-| 2x | 33,3% |
-| 3x | 25,0% |
+| razão alvo/stop | empate (sem taxa) | **empate real (taxa 0,1%)** |
+|---|---|---|
+| 1x (alvo = stop) | 50,0% | 54,5% |
+| 1,5x | 40,0% | 43,5% |
+| 2x | 33,3% | **40,0%** |
+| 3x | 25,0% | 28,6% |
 
-Com alvo 2x maior que o stop, **34% de acerto já dá lucro**. Isso é
-impossível numa binária de payout 85%.
+⚠️ **Olhe sempre a última coluna.** A taxa aparece dos dois lados da conta:
+encolhe o ganho e engorda a perda. Com alvo 2% e stop 1%, a razão nominal
+de 2,00x vira **1,50x** líquida, e o empate sobe de 33,3% para **40,0%**.
+Uma estratégia com 38% de acerto parece vencedora na coluna do meio e
+perde dinheiro na vida real. O relatório mostra os dois números, com
+destaque para o que vale.
+
+Ainda assim, 40% é muito melhor que os 54,05% da binária — e a diferença
+cresce quanto maior o alvo em relação ao stop.
+
+Quanto menor o alvo, mais a taxa pesa: um scalp de 0,3% com stop de 0,3%
+precisa de **62,5%** de acerto. Alvos apertados são devorados pelo custo.
+
+### O tamanho da amostra é o que mais engana
+
+3000 candles de 15 min cobrem só ~31 dias e costumam render 10 a 40
+operações — sem força estatística nenhuma. Diferente da IQ Option, a
+Binance entrega **anos** de histórico de graça. Peça bastante:
+
+```powershell
+python -m trading_bot.cli backtest-spot --symbol BTCUSDT --candles 30000 --stop 1.0 --target 2.0
+```
+
+30000 candles de 15 min ≈ 10 meses. A busca é paginada de 1000 em 1000 e
+leva alguns segundos. O relatório calcula sozinho quantos candles faltam
+para você chegar a 30 operações.
 
 ### Como rodar
 

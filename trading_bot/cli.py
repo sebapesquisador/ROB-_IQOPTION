@@ -536,13 +536,20 @@ def cmd_backtest_spot(args) -> int:
     names = [args.strategy] if args.strategy else [s["name"] for s in available_strategies()]
     results = bt.compare(df, names, symbol)
 
+    from .backtest.spot import breakeven_liquido, payoff_liquido
+
     rr = args.target / args.stop if args.stop else 0
-    be = 100 / (1 + rr) if rr else 0
+    be_bruto = 100 / (1 + rr) if rr else 0
+    # O que vale é o número depois do custo. A razão nominal alvo/stop
+    # superestima o payoff e faz uma estratégia perdedora parecer vencedora.
+    rr_liq = payoff_liquido(args.stop, args.target, args.fee, args.slippage)
+    be_liq = breakeven_liquido(args.stop, args.target, args.fee, args.slippage)
+
     print("=" * 105)
     print(f"  BACKTEST SPOT — stop {args.stop}% | alvo {args.target}% | "
           f"taxa {args.fee}% por ordem")
-    print(f"  razão alvo/stop {rr:.2f}x → acerto de equilíbrio {be:.1f}% "
-          f"(sem taxas)")
+    print(f"  payoff líquido {rr_liq:.2f}x → ACERTO DE EQUILÍBRIO {be_liq:.1f}%"
+          f"   (nominal {rr:.2f}x / {be_bruto:.1f}% antes do custo)")
     print("=" * 105)
     print(f"  {'estratégia':<22}{'trades':>7}{'acerto':>9}{'payoff':>8}"
           f"{'lucro':>11}{'taxas':>9}{'DD%':>7}{'p-valor':>9}")
@@ -560,8 +567,30 @@ def cmd_backtest_spot(args) -> int:
         if "error" not in r:
             print(f"  {r['strategy']:<22} {r['verdict']}")
     print("=" * 105)
-    print("\n  payoff = ganho médio ÷ perda média. Em spot o acerto sozinho não")
-    print("  decide: com payoff 2.0, 34% de acerto já é lucrativo.")
+    print(f"\n  payoff = ganho médio ÷ perda média. Em spot o acerto sozinho não")
+    print(f"  decide: com estes parâmetros, o alvo é passar de {be_liq:.1f}%.")
+
+    # Amostra: 30 operações é o mínimo para o teste ter alguma força. Com
+    # dados da Binance isso é resolvível — o histórico tem anos, e o único
+    # custo de pedir mais candles é esperar alguns segundos a mais.
+    validos = [r for r in results if "error" not in r]
+    magros = [r for r in validos if r["total_trades"] < 30]
+    if magros and validos:
+        pior = min(validos, key=lambda r: r["total_trades"])
+        por_candle = pior["total_trades"] / len(df) if len(df) else 0
+        if por_candle > 0:
+            preciso = int(40 / por_candle / 1000 + 1) * 1000
+            dias = preciso * tf / 60 / 24
+            print(f"\n  ⚠ {len(magros)} de {len(validos)} estratégias ficaram abaixo "
+                  f"de 30 operações — amostra pequena demais para concluir")
+            print(f"    qualquer coisa. A Binance entrega anos de histórico; "
+                  f"peça mais candles:")
+            print(f"\n    python -m trading_bot.cli backtest-spot --symbol {symbol} "
+                  f"--candles {preciso} \\")
+            print(f"        --stop {args.stop} --target {args.target}")
+            print(f"\n    ({preciso} candles de {tf} min ≈ {dias:.0f} dias; "
+                  f"a busca é paginada, leva alguns segundos)")
+
     print("\n  Valide em conta demo por semanas antes de considerar dinheiro real.\n")
     return 0
 

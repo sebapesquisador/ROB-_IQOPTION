@@ -49,6 +49,39 @@ from ..core.strategies import get_strategy
 logger = logging.getLogger(__name__)
 
 
+def payoff_liquido(
+    stop_pct: float, target_pct: float,
+    fee_pct: float = 0.1, slippage_pct: float = 0.0,
+) -> float:
+    """Razão ganho/perda depois de taxas e slippage.
+
+    A razão nominal alvo/stop é propaganda: com alvo 2% e stop 1% ela diz
+    2,00, mas o custo aparece dos dois lados da conta — encolhe o ganho e
+    engorda a perda. A 0,1% por ordem sobram (2,0-0,2)/(1,0+0,2) = 1,50.
+
+    A diferença não é cosmética: muda o acerto de equilíbrio de 33,3% para
+    40,0%. Uma estratégia com 38% de acerto parece vencedora pela conta
+    nominal e perde dinheiro na real.
+    """
+    custo = 2 * (fee_pct + slippage_pct)   # entrada e saída
+    ganho = target_pct - custo
+    perda = stop_pct + custo
+    if perda <= 0:
+        return 0.0
+    return max(ganho, 0.0) / perda
+
+
+def breakeven_liquido(
+    stop_pct: float, target_pct: float,
+    fee_pct: float = 0.1, slippage_pct: float = 0.0,
+) -> float:
+    """Acerto (%) necessário para empatar, já contando os custos."""
+    r = payoff_liquido(stop_pct, target_pct, fee_pct, slippage_pct)
+    if r <= 0:
+        return 100.0
+    return 100.0 / (1.0 + r)
+
+
 @dataclass(slots=True)
 class SpotTrade:
     entry_time: Any
