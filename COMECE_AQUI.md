@@ -258,6 +258,19 @@ fazer nada.
 Vale no sentido inverso também — se o ativo caiu, perder pouco é
 resultado.
 
+### Salvando a saída num arquivo
+
+Funciona normalmente:
+
+```powershell
+python -m trading_bot.cli backtest-spot --symbol BTCUSDT --candles 30000 --sweep | Tee-Object RETORNO.txt
+```
+
+Ao redirecionar, o Windows usa a codificação antiga (cp1252) em vez de
+UTF-8. Símbolos como `→` e `✔` não existem lá e antes derrubavam o
+programa. Agora eles viram `->` e `OK` automaticamente — os acentos do
+português, que a cp1252 tem, continuam certos.
+
 ### O tamanho da amostra é o que mais engana
 
 3000 candles de 15 min cobrem só ~31 dias e costumam render 10 a 40

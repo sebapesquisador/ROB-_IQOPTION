@@ -23,6 +23,67 @@ from .core.logging_setup import setup_logging
 logger = logging.getLogger("trading_bot")
 
 
+# Símbolos que o relatório usa e que faltam em codificações antigas como a
+# cp1252 do Windows. Cada um tem um equivalente que cabe em qualquer lugar.
+_SUBSTITUTOS = {
+    "→": "->", "←": "<-", "⟶": "->",
+    "✔": "OK", "✖": "x", "⚠": "!", "✓": "ok", "✗": "x",
+    "≈": "~", "≤": "<=", "≥": ">=", "≠": "!=",
+    "—": "-", "–": "-", "“": '"', "”": '"', "‘": "'", "’": "'",
+    "█": "#", "░": ".", "•": "*", "…": "...",
+}
+
+
+def _ajustar_saida_para_o_terminal() -> None:
+    """Impede que um símbolo derrube o programa em terminais antigos.
+
+    No Windows, o Python escreve UTF-8 no console mas usa a codificação
+    local (cp1252) quando a saída é redirecionada — `| Tee-Object`, `>
+    arquivo.txt`, um pipe qualquer. Aí uma seta comum derruba tudo com
+    UnicodeEncodeError, e o tratador de erro derruba de novo ao tentar
+    imprimir o próprio aviso de falha.
+
+    Forçar UTF-8 resolveria o travamento e criaria outro problema: o
+    PowerShell leria os bytes como cp1252 e encheria o texto em português
+    de "Ã§". Como os acentos EXISTEM na cp1252 e só os símbolos decorativos
+    faltam, a saída correta é manter a codificação do terminal e trocar
+    apenas o que não cabe nela.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        codificacao = getattr(stream, "encoding", None) or "utf-8"
+        try:
+            "".join(_SUBSTITUTOS).encode(codificacao)
+            continue          # o terminal dá conta de tudo
+        except (UnicodeEncodeError, LookupError):
+            pass
+
+        faltantes = {}
+        for simbolo, alternativa in _SUBSTITUTOS.items():
+            try:
+                simbolo.encode(codificacao)
+            except (UnicodeEncodeError, LookupError):
+                faltantes[ord(simbolo)] = alternativa
+        try:
+            stream.reconfigure(errors="replace")   # rede de segurança
+        except Exception:
+            pass
+        if faltantes:
+            _instalar_traducao(stream, faltantes)
+
+
+def _instalar_traducao(stream, tabela: dict) -> None:
+    """Troca os símbolos ausentes na hora de escrever."""
+    original = stream.write
+
+    def write(texto, _orig=original, _tab=tabela):
+        return _orig(texto.translate(_tab) if isinstance(texto, str) else texto)
+
+    try:
+        stream.write = write          # type: ignore[method-assign]
+    except (AttributeError, TypeError):
+        pass
+
+
 def _banner(settings) -> None:
     live = settings.is_live
     print("=" * 66)
@@ -929,6 +990,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # Antes de qualquer print: um símbolo não pode derrubar o programa.
+    _ajustar_saida_para_o_terminal()
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -946,7 +1009,12 @@ def main(argv=None) -> int:
         return 130
     except Exception as exc:
         logger.exception("erro fatal")
-        print(f"\n✖ {exc}")
+        try:
+            print(f"\n✖ {exc}")
+        except UnicodeEncodeError:
+            # Último recurso: o aviso de erro jamais pode ser o erro.
+            sys.stdout.write("\nERRO: " + str(exc).encode(
+                "ascii", "replace").decode("ascii") + "\n")
         return 1
 
 
